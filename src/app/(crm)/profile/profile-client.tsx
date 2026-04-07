@@ -26,6 +26,8 @@ export function ProfileClient({ user }: Props) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [sipTesting, setSipTesting] = useState(false);
+  const [sipTestResult, setSipTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Password change
   const [currentPassword, setCurrentPassword] = useState("");
@@ -37,6 +39,61 @@ export function ProfileClient({ user }: Props) {
   const [sipPassword, setSipPassword] = useState(user.sipPassword || "");
   const [sipAuthUser, setSipAuthUser] = useState(user.sipAuthUser || "");
   const [sipDisplayName, setSipDisplayName] = useState(user.sipDisplayName || "");
+
+  async function testSipConnection() {
+    if (!sipUsername || !sipPassword) {
+      setSipTestResult({ ok: false, message: "Enter SIP username and password first" });
+      return;
+    }
+    setSipTesting(true);
+    setSipTestResult(null);
+
+    try {
+      const { TelnyxRTC } = await import("@telnyx/webrtc");
+      const testClient = new TelnyxRTC({
+        login: sipUsername,
+        password: sipPassword,
+      });
+
+      const result = await new Promise<{ ok: boolean; message: string }>((resolve) => {
+        const timeout = setTimeout(() => {
+          try { testClient.disconnect(); } catch {}
+          resolve({ ok: false, message: "Connection timeout (10s) — check credentials and network" });
+        }, 10000);
+
+        testClient.on("telnyx.ready", () => {
+          clearTimeout(timeout);
+          try { testClient.disconnect(); } catch {}
+          resolve({ ok: true, message: `Registered successfully as ${sipUsername}` });
+        });
+
+        testClient.on("telnyx.error", (error: any) => {
+          clearTimeout(timeout);
+          try { testClient.disconnect(); } catch {}
+          const msg = error?.message || JSON.stringify(error);
+          if (msg.includes("Login Incorrect") || msg.includes("-32001")) {
+            resolve({ ok: false, message: "Login incorrect — check your SIP username and password. Make sure they match your Telnyx SIP Connection credentials." });
+          } else {
+            resolve({ ok: false, message: `Connection error: ${msg}` });
+          }
+        });
+
+        testClient.on("telnyx.socket.error", () => {
+          clearTimeout(timeout);
+          try { testClient.disconnect(); } catch {}
+          resolve({ ok: false, message: "WebSocket connection failed — Telnyx service may be unreachable" });
+        });
+
+        testClient.connect();
+      });
+
+      setSipTestResult(result);
+    } catch (e: any) {
+      setSipTestResult({ ok: false, message: `Test failed: ${e.message}` });
+    } finally {
+      setSipTesting(false);
+    }
+  }
 
   async function saveSipCredentials() {
     setSaving(true);
@@ -187,14 +244,29 @@ export function ProfileClient({ user }: Props) {
             />
           </div>
         </div>
-        <button
-          onClick={saveSipCredentials}
-          disabled={saving}
-          className="mt-4 h-9 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-2 disabled:opacity-50"
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Save SIP Credentials
-        </button>
+        <div className="mt-4 flex gap-3">
+          <button
+            onClick={saveSipCredentials}
+            disabled={saving}
+            className="h-9 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save SIP Credentials
+          </button>
+          <button
+            onClick={testSipConnection}
+            disabled={sipTesting || !sipUsername || !sipPassword}
+            className="h-9 px-4 bg-muted border border-border rounded-lg text-sm font-medium flex items-center gap-2 disabled:opacity-50 hover:bg-muted/80"
+          >
+            {sipTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
+            {sipTesting ? "Testing..." : "Test SIP Connection"}
+          </button>
+        </div>
+        {sipTestResult && (
+          <div className={cn("mt-3 px-4 py-3 rounded-lg text-sm", sipTestResult.ok ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500")}>
+            {sipTestResult.ok ? "✓ " : "✗ "}{sipTestResult.message}
+          </div>
+        )}
       </div>
 
       {/* Change Password */}
