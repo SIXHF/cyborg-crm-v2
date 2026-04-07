@@ -229,48 +229,14 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone ──
-  // Chrome mutes local audio when getUserMedia is called for the FIRST time.
-  // But after getUserMedia has been called and released, subsequent calls
-  // don't cause the same disruption. The second call's ringback works because
-  // the first call already "primed" Chrome's audio subsystem.
-  //
-  // Fix: prime getUserMedia on page load — call it once and immediately
-  // release the stream. Chrome's audio subsystem is initialized without
-  // keeping the mic active (no Windows ducking).
-  const ringbackElRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    // Prime Chrome's audio subsystem — keep stream alive so Chrome
-    // stays in "communications mode" and doesn't disrupt audio on actual calls.
-    // Windows is set to "Do nothing" so keeping the mic open won't duck audio.
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      // DON'T release — keep Chrome in communications mode permanently
-      log("Audio system primed (mic stream kept alive)");
-    }).catch(() => {});
-  }, []);
-
+  // ── Ringback ──
+  // Chrome on Windows mutes ALL local audio during WebRTC calls.
+  // Visual ringing indicator is used instead (pulsing rings + border flash).
+  // Future: Electron wrapper or Magnus Billing server-side ringback.
   function startRingback() {
-    stopRingback();
-    const audio = new Audio("/ringback.mp3?v=" + Date.now());
-    // NO loop — the 60s MP3 has 10 ring cycles built in.
-    // MP3 loop causes broken audio artifacts at the loop point.
-    audio.volume = 1.0;
-    ringbackElRef.current = audio;
-    audio.play()
-      .then(() => log("Ringback playing"))
-      .catch(e => log("Ringback failed: " + e.message));
+    log("Ringing (visual)");
   }
-
-  function stopRingback() {
-    const el = ringbackElRef.current;
-    if (el) {
-      el.pause();
-      el.src = "";
-      ringbackElRef.current = null;
-      log("Ringback stopped");
-    }
-  }
+  function stopRingback() {}
 
   // Safety net: stop ringback when call becomes active/ended/idle
   // Also: if a manual call ends, force-clear disposition
@@ -589,8 +555,13 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)]">
+    <div className="flex h-[calc(100vh-3.5rem)] relative">
       <audio ref={audioRef} autoPlay />
+
+      {/* Full-screen ringing border flash */}
+      {(callState === "ringing" || callState === "connecting") && (
+        <div className="absolute inset-0 pointer-events-none z-50 border-4 border-blue-500/50 animate-pulse rounded-lg" />
+      )}
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
@@ -717,16 +688,27 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
 
             {/* Call status */}
             {callState !== "idle" && callState !== "ended" && (
-              <p className={cn(
-                "text-sm font-medium",
-                callState === "connecting" && "text-yellow-500",
-                callState === "ringing" && "text-blue-500 animate-pulse",
-                callState === "active" && "text-green-500",
-              )}>
-                {callState === "connecting" && "Connecting..."}
-                {callState === "ringing" && "Ringing..."}
-                {callState === "active" && `In Call — ${formatTimer(callTimer)}`}
-              </p>
+              <>
+                {callState === "connecting" && (
+                  <p className="text-sm font-medium text-yellow-500">Connecting...</p>
+                )}
+                {callState === "ringing" && (
+                  <div className="space-y-3">
+                    {/* Pulsing rings animation */}
+                    <div className="relative flex items-center justify-center">
+                      <div className="absolute w-24 h-24 rounded-full border-2 border-blue-500/60 animate-ping" />
+                      <div className="absolute w-32 h-32 rounded-full border border-blue-500/30 animate-ping" style={{ animationDelay: "0.5s" }} />
+                      <div className="absolute w-40 h-40 rounded-full border border-blue-500/15 animate-ping" style={{ animationDelay: "1s" }} />
+                      <Phone className="w-8 h-8 text-blue-500 animate-bounce relative z-10" />
+                    </div>
+                    <div className="h-20" /> {/* spacer for the rings */}
+                    <p className="text-lg font-bold text-blue-500 animate-pulse">Ringing...</p>
+                  </div>
+                )}
+                {callState === "active" && (
+                  <p className="text-sm font-medium text-green-500">{`In Call — ${formatTimer(callTimer)}`}</p>
+                )}
+              </>
             )}
 
             {/* Call controls */}
