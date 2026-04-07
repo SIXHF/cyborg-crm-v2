@@ -377,6 +377,10 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       );
       activeCallRef.current = simpleUser.session;
 
+      // Start ringback HERE — after await call() returns, getUserMedia is done,
+      // INVITE is sent, Chrome is in "communications mode". Audio won't be killed.
+      startRingback();
+
       // Also attach session state listener as safety net
       if (simpleUser.session) {
         simpleUser.session.stateChange.addListener((state: any) => {
