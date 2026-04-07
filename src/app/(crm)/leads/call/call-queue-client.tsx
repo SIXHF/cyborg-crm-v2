@@ -266,8 +266,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       el.pause();
       el.src = "";
       ringbackElRef.current = null;
+      log("Ringback stopped");
     }
-    log("Ringback stopped");
   }
 
   // Safety net: stop ringback when call becomes active/ended/idle
