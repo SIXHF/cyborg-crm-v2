@@ -213,6 +213,18 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         await simpleUser.connect();
         await simpleUser.register();
         telnyxClientRef.current = simpleUser;
+
+        // Pre-acquire microphone so getUserMedia is already done before
+        // the first call. Without this, the first call's getUserMedia
+        // kills the ringback audio. No monkey-patch — just pre-acquire.
+        try {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Keep reference so it's not garbage collected
+          (simpleUser as any).__preAcquiredMic = micStream;
+          log("Mic pre-acquired");
+        } catch (e: any) {
+          log("Mic pre-acquire failed: " + e.message);
+        }
       } catch (e: any) {
         log(`Init failed: ${e.message}`);
         setRegistering(false);
