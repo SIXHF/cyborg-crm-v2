@@ -207,8 +207,9 @@ export function ProfileClient({ user }: Props) {
       <div className="bg-card border border-border rounded-xl p-6">
         <h3 className="font-semibold mb-4 flex items-center gap-2"><Phone className="w-4 h-4" />SIP Credentials (Softphone)</h3>
         <p className="text-sm text-muted-foreground mb-4">
-          Configure your SIP credentials for the WebRTC softphone. These are your Magnus Billing credentials for sip.osetec.net.
+          Configure your SIP credentials for the WebRTC softphone. These are your Magnus Billing credentials for sip.osetec.com.
         </p>
+        <form onSubmit={(e) => { e.preventDefault(); saveSipCredentials(); }} autoComplete="off">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">SIP Username</label>
@@ -274,12 +275,13 @@ export function ProfileClient({ user }: Props) {
             {sipTestResult.ok ? "✓ " : "✗ "}{sipTestResult.message}
           </div>
         )}
+        </form>
       </div>
 
       {/* Change Password */}
       <div className="bg-card border border-border rounded-xl p-6">
         <h3 className="font-semibold mb-4 flex items-center gap-2"><Key className="w-4 h-4" />Change Password</h3>
-        <div className="space-y-3 max-w-sm">
+        <form onSubmit={(e) => { e.preventDefault(); changePassword(); }} autoComplete="off" className="space-y-3 max-w-sm">
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Current Password</label>
             <input
@@ -315,7 +317,7 @@ export function ProfileClient({ user }: Props) {
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
             Change Password
           </button>
-        </div>
+        </form>
       </div>
     </div>
   );

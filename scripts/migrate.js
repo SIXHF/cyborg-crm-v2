@@ -32,16 +32,24 @@ async function migrate() {
     for (const file of files) {
       const content = fs.readFileSync(path.join(migrationDir, file), 'utf8');
       console.log('Running migration:', file);
-      try {
-        await sql.unsafe(content);
-        console.log('  Done:', file);
-      } catch (e) {
-        if (e.message && (e.message.includes('already exists') || e.message.includes('duplicate'))) {
-          console.log('  Skipped (already applied):', file);
-        } else {
-          console.error('  Error:', file, '-', e.message);
+      // Split by Drizzle's statement-breakpoint marker and run each statement individually
+      // This way one failing statement (e.g. enum already exists) doesn't block the rest
+      const statements = content.split('--> statement-breakpoint').map(s => s.trim()).filter(s => s.length > 0);
+      let applied = 0, skipped = 0, errors = 0;
+      for (const stmt of statements) {
+        try {
+          await sql.unsafe(stmt);
+          applied++;
+        } catch (e) {
+          if (e.message && (e.message.includes('already exists') || e.message.includes('duplicate'))) {
+            skipped++;
+          } else {
+            errors++;
+            console.error('  Statement error:', e.message.slice(0, 100));
+          }
         }
       }
+      console.log(`  ${file}: ${applied} applied, ${skipped} skipped, ${errors} errors (${statements.length} total)`);
     }
   } else {
     console.log('No drizzle/ directory found, skipping SQL migration');

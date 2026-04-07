@@ -9,7 +9,7 @@ import {
   FileText, ChevronDown, Moon, Sun, Menu, X, Zap,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface SidebarProps {
   user: {
@@ -56,7 +56,10 @@ export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["Data", "System"]));
+
+  useEffect(() => { setMounted(true); }, []);
 
   const toggleSection = (label: string) => {
     setExpandedSections((prev) => {
@@ -160,8 +163,8 @@ export function Sidebar({ user }: SidebarProps) {
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           className="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-sm text-muted-foreground hover:bg-muted transition-colors"
         >
-          {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          {theme === "dark" ? "Light Mode" : "Dark Mode"}
+          {mounted && theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {mounted ? (theme === "dark" ? "Light Mode" : "Dark Mode") : "Toggle Theme"}
         </button>
         <div className="flex items-center gap-2 px-2">
           <div className="w-7 h-7 bg-primary/20 rounded-full flex items-center justify-center text-xs font-medium text-primary">
