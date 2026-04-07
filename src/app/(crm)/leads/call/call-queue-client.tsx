@@ -359,9 +359,9 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               const code = response?.message?.statusCode;
               log(`SIP ${code} provisional response`);
               setCallState("ringing");
-              // Start ringback HERE — getUserMedia has already completed by now,
-              // Chrome is in "communications mode", audio won't be interrupted
-              startRingback();
+              // Do NOT call startRingback here — it restarts the audio from
+              // the beginning, merging two rings into one continuous tone.
+              // Ringback is already playing from after await call().
             },
             onReject: (response: any) => {
               const code = response?.message?.statusCode;
