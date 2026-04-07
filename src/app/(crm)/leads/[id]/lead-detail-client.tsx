@@ -7,8 +7,29 @@ import {
   User, CreditCard, MessageSquare, Paperclip, Clock, Phone,
   MapPin, Mail, Briefcase, Car, Users as UsersIcon, Shield, ArrowLeft,
   Edit, Save, X, PhoneForwarded, Send, Trash2, CheckCircle, Plus,
+  Search, Loader2,
 } from "lucide-react";
 import { cn, formatPhone, timeAgo } from "@/lib/utils";
+
+const cardFields = [
+  { key: "bank", label: "Bank" },
+  { key: "cardType", label: "Card Type" },
+  { key: "noc", label: "Name on Card" },
+  { key: "ccn", label: "Card Number" },
+  { key: "cvc", label: "CVC" },
+  { key: "expDate", label: "Exp Date" },
+  { key: "creditLimit", label: "Credit Limit" },
+  { key: "balance", label: "Balance" },
+  { key: "available", label: "Available" },
+  { key: "lastPayment", label: "Last Payment" },
+  { key: "lastPayDate", label: "Last Pay Date" },
+  { key: "lastPayFrom", label: "Last Pay From" },
+  { key: "lastCharge", label: "Last Charge" },
+  { key: "transactions", label: "Transactions" },
+] as const;
+
+const emptyCard: Record<string, string> = Object.fromEntries(cardFields.map(f => [f.key, ""]));
+
 
 interface Props {
   data: any;
@@ -47,6 +68,24 @@ export function LeadDetailClient({ data, currentUser }: Props) {
   const [followupDate, setFollowupDate] = useState("");
   const [followupNote, setFollowupNote] = useState("");
   const [followupSaving, setFollowupSaving] = useState(false);
+
+  // Card management state
+  const [showCardForm, setShowCardForm] = useState(false);
+  const [cardFormData, setCardFormData] = useState<Record<string, string>>({ ...emptyCard });
+  const [cardSaving, setCardSaving] = useState(false);
+  const [editingCardId, setEditingCardId] = useState<number | null>(null);
+  const [editCardData, setEditCardData] = useState<Record<string, string>>({});
+  const [editCardSaving, setEditCardSaving] = useState(false);
+  const [deleteCardConfirmId, setDeleteCardConfirmId] = useState<number | null>(null);
+
+  // Carrier lookup state
+  const [carrierLoading, setCarrierLoading] = useState(false);
+  const [carrierResult, setCarrierResult] = useState<{ carrier: string; lineType: string } | null>(null);
+
+  // BIN lookup state
+  const [binLoading, setBinLoading] = useState(false);
+  const [binResult, setBinResult] = useState<{ brand: string; type: string; issuer: string; country: string } | null>(null);
+
   const { lead, cards, comments, attachments, followups, calls, cosigners, employers, vehicles, relatives, addresses, emails, licenses, agentName } = data;
 
   async function addComment() {
@@ -155,6 +194,117 @@ export function LeadDetailClient({ data, currentUser }: Props) {
     } catch {
       alert("Failed to update follow-up");
     }
+  }
+
+  async function addCard() {
+    setCardSaving(true);
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/cards`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cardFormData),
+      });
+      if (res.ok) {
+        setCardFormData({ ...emptyCard });
+        setShowCardForm(false);
+        router.refresh();
+      } else {
+        const d = await res.json();
+        alert(d.error || "Failed to add card");
+      }
+    } catch {
+      alert("Failed to add card");
+    } finally {
+      setCardSaving(false);
+    }
+  }
+
+  async function saveEditCard() {
+    if (editingCardId === null) return;
+    setEditCardSaving(true);
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/cards`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardId: editingCardId, ...editCardData }),
+      });
+      if (res.ok) {
+        setEditingCardId(null);
+        setEditCardData({});
+        router.refresh();
+      } else {
+        const d = await res.json();
+        alert(d.error || "Failed to update card");
+      }
+    } catch {
+      alert("Failed to update card");
+    } finally {
+      setEditCardSaving(false);
+    }
+  }
+
+  async function deleteCard(cardId: number) {
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/cards`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardId }),
+      });
+      if (res.ok) {
+        setDeleteCardConfirmId(null);
+        router.refresh();
+      } else {
+        const d = await res.json();
+        alert(d.error || "Failed to delete card");
+      }
+    } catch {
+      alert("Failed to delete card");
+    }
+  }
+
+  async function carrierLookup() {
+    if (!lead.phone) return;
+    setCarrierLoading(true);
+    setCarrierResult(null);
+    try {
+      const res = await fetch(`/api/carrier-lookup?phone=${encodeURIComponent(lead.phone)}`);
+      const d = await res.json();
+      if (res.ok) {
+        setCarrierResult({ carrier: d.carrier || d.name || "Unknown", lineType: d.lineType || d.type || "Unknown" });
+      } else {
+        alert(d.error || "Carrier lookup failed");
+      }
+    } catch {
+      alert("Carrier lookup failed");
+    } finally {
+      setCarrierLoading(false);
+    }
+  }
+
+  async function binLookup() {
+    if (!lead.cardNumberBin) return;
+    setBinLoading(true);
+    setBinResult(null);
+    try {
+      const res = await fetch(`/api/bin-lookup?bin=${encodeURIComponent(lead.cardNumberBin)}`);
+      const d = await res.json();
+      if (res.ok) {
+        setBinResult({ brand: d.brand || "Unknown", type: d.type || "Unknown", issuer: d.issuer || "Unknown", country: d.country || "Unknown" });
+      } else {
+        alert(d.error || "BIN lookup failed");
+      }
+    } catch {
+      alert("BIN lookup failed");
+    } finally {
+      setBinLoading(false);
+    }
+  }
+
+  function startEditCard(card: any) {
+    setEditingCardId(card.id);
+    const data: Record<string, string> = {};
+    cardFields.forEach(f => { data[f.key] = card[f.key] || ""; });
+    setEditCardData(data);
   }
 
   function InfoRow({ label, value }: { label: string; value: any }) {
@@ -323,7 +473,35 @@ export function LeadDetailClient({ data, currentUser }: Props) {
             <InfoRow label="First Name" value={lead.firstName} />
             <InfoRow label="Last Name" value={lead.lastName} />
             <InfoRow label="Email" value={lead.email} />
-            <InfoRow label="Phone" value={lead.phone ? formatPhone(lead.phone) : null} />
+            {lead.phone ? (
+              <div className="flex justify-between items-center py-2 border-b border-border/50">
+                <span className="text-sm text-muted-foreground">Phone</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{formatPhone(lead.phone)}</span>
+                  <button
+                    onClick={carrierLookup}
+                    disabled={carrierLoading}
+                    className="h-6 px-2 bg-muted border border-border rounded text-xs font-medium hover:bg-muted/80 transition-colors flex items-center gap-1 disabled:opacity-50"
+                    title="Carrier Lookup"
+                  >
+                    {carrierLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                    Carrier
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {carrierResult && (
+              <div className="py-2 border-b border-border/50 bg-blue-500/5 px-2 rounded">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Carrier</span>
+                  <span className="font-medium">{carrierResult.carrier}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Line Type</span>
+                  <span className="font-medium capitalize">{carrierResult.lineType}</span>
+                </div>
+              </div>
+            )}
             <InfoRow label="Landline" value={lead.landline ? formatPhone(lead.landline) : null} />
             <InfoRow label="Date of Birth" value={lead.dob} />
             <InfoRow label="SSN Last 4" value={lead.ssnLast4} />
@@ -346,7 +524,43 @@ export function LeadDetailClient({ data, currentUser }: Props) {
             <InfoRow label="Requested Limit" value={lead.requestedLimit} />
             <InfoRow label="Card Brand" value={lead.cardBrand} />
             <InfoRow label="Card Issuer" value={lead.cardIssuer} />
-            <InfoRow label="BIN" value={lead.cardNumberBin} />
+            {lead.cardNumberBin ? (
+              <div className="flex justify-between items-center py-2 border-b border-border/50 last:border-0">
+                <span className="text-sm text-muted-foreground">BIN</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{lead.cardNumberBin}</span>
+                  <button
+                    onClick={binLookup}
+                    disabled={binLoading}
+                    className="h-6 px-2 bg-muted border border-border rounded text-xs font-medium hover:bg-muted/80 transition-colors flex items-center gap-1 disabled:opacity-50"
+                    title="BIN Lookup"
+                  >
+                    {binLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                    Lookup
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {binResult && (
+              <div className="py-2 border-b border-border/50 last:border-0 bg-blue-500/5 px-2 rounded">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Brand</span>
+                  <span className="font-medium">{binResult.brand}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Type</span>
+                  <span className="font-medium">{binResult.type}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Issuer</span>
+                  <span className="font-medium">{binResult.issuer}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Country</span>
+                  <span className="font-medium">{binResult.country}</span>
+                </div>
+              </div>
+            )}
           </div>
           <div className="bg-card border border-border rounded-xl p-5">
             <h3 className="font-semibold mb-3 flex items-center gap-2"><Briefcase className="w-4 h-4" />Business</h3>
@@ -362,45 +576,183 @@ export function LeadDetailClient({ data, currentUser }: Props) {
 
       {activeTab === "cards" && (
         <div className="space-y-4">
-          {cards.length === 0 ? (
+          {/* Add Card button / form */}
+          {!showCardForm ? (
+            <button
+              onClick={() => setShowCardForm(true)}
+              className="h-9 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Add Card
+            </button>
+          ) : (
+            <div className="bg-card border border-border rounded-xl p-5">
+              <h4 className="font-medium text-sm mb-4 flex items-center gap-2">
+                <Plus className="w-4 h-4" /> New Card
+              </h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {cardFields.map(f => (
+                  <div key={f.key}>
+                    <label className="block text-xs text-muted-foreground mb-1">{f.label}</label>
+                    <input
+                      type="text"
+                      value={cardFormData[f.key] || ""}
+                      onChange={(e) => setCardFormData(prev => ({ ...prev, [f.key]: e.target.value }))}
+                      className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      placeholder={f.label}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => { setShowCardForm(false); setCardFormData({ ...emptyCard }); }}
+                  className="h-8 px-3 bg-muted border border-border rounded-lg text-sm hover:bg-muted/80"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addCard}
+                  disabled={cardSaving}
+                  className="h-8 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
+                >
+                  {cardSaving ? "Saving..." : "Save Card"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Cards list */}
+          {cards.length === 0 && !showCardForm ? (
             <p className="text-center py-12 text-muted-foreground">No cards on file</p>
           ) : (
             cards.map((card: any) => (
               <div key={card.id} className="bg-card border border-border rounded-xl p-5">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Bank</p>
-                    <p className="font-medium">{card.bank || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Type</p>
-                    <p className="font-medium">{card.cardType || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Number</p>
-                    <p className="font-medium font-mono">{card.ccn || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Expiry</p>
-                    <p className="font-medium">{card.expDate || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">CVC</p>
-                    <p className="font-medium">{card.cvc || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Credit Limit</p>
-                    <p className="font-medium">{card.creditLimit ? `$${Number(card.creditLimit).toLocaleString()}` : "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Balance</p>
-                    <p className="font-medium">{card.balance ? `$${Number(card.balance).toLocaleString()}` : "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Name on Card</p>
-                    <p className="font-medium">{card.noc || "—"}</p>
-                  </div>
-                </div>
+                {editingCardId === card.id ? (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {cardFields.map(f => (
+                        <div key={f.key}>
+                          <label className="block text-xs text-muted-foreground mb-1">{f.label}</label>
+                          <input
+                            type="text"
+                            value={editCardData[f.key] || ""}
+                            onChange={(e) => setEditCardData(prev => ({ ...prev, [f.key]: e.target.value }))}
+                            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                            placeholder={f.label}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-end gap-2 mt-4">
+                      <button
+                        onClick={() => { setEditingCardId(null); setEditCardData({}); }}
+                        className="h-8 px-3 bg-muted border border-border rounded-lg text-sm hover:bg-muted/80"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={saveEditCard}
+                        disabled={editCardSaving}
+                        className="h-8 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {editCardSaving ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Bank</p>
+                        <p className="font-medium">{card.bank || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Type</p>
+                        <p className="font-medium">{card.cardType || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Name on Card</p>
+                        <p className="font-medium">{card.noc || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Number</p>
+                        <p className="font-medium font-mono">{card.ccn || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">CVC</p>
+                        <p className="font-medium">{card.cvc || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Expiry</p>
+                        <p className="font-medium">{card.expDate || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Credit Limit</p>
+                        <p className="font-medium">{card.creditLimit ? `$${Number(card.creditLimit).toLocaleString()}` : "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Balance</p>
+                        <p className="font-medium">{card.balance ? `$${Number(card.balance).toLocaleString()}` : "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Available</p>
+                        <p className="font-medium">{card.available ? `$${Number(card.available).toLocaleString()}` : "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Last Payment</p>
+                        <p className="font-medium">{card.lastPayment || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Last Pay Date</p>
+                        <p className="font-medium">{card.lastPayDate || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Last Pay From</p>
+                        <p className="font-medium">{card.lastPayFrom || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Last Charge</p>
+                        <p className="font-medium">{card.lastCharge || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Transactions</p>
+                        <p className="font-medium">{card.transactions || "—"}</p>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-border/50">
+                      <button
+                        onClick={() => startEditCard(card)}
+                        className="h-7 px-3 bg-muted border border-border rounded-lg text-xs font-medium hover:bg-muted/80 transition-colors flex items-center gap-1"
+                      >
+                        <Edit className="w-3.5 h-3.5" /> Edit
+                      </button>
+                      {deleteCardConfirmId === card.id ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => deleteCard(card.id)}
+                            className="h-7 px-3 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setDeleteCardConfirmId(null)}
+                            className="h-7 px-2 bg-muted rounded-lg text-xs hover:bg-muted/80 transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setDeleteCardConfirmId(card.id)}
+                          className="h-7 px-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-colors flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Delete
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             ))
           )}
