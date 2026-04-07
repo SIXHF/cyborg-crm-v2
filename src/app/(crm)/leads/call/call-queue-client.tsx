@@ -247,36 +247,24 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
-  // The problem: getUserMedia switches Chrome to "communications mode" which
-  // disrupts all audio. AudioContext created before getUserMedia → gets suspended.
-  // AudioContext created after getUserMedia → routes to wrong device.
-  // <audio> element → routes to wrong device after getUserMedia.
+  // ctx.destination goes to wrong output after getUserMedia.
+  // <audio src> goes to wrong output after getUserMedia.
+  // ONLY srcObject on the SIP audio element routes correctly because
+  // Chrome treats it as WebRTC/communications audio.
   //
-  // Solution: create AudioContext BEFORE getUserMedia (click handler = correct
-  // audio device routing), but start oscillators AFTER getUserMedia completes
-  // (call ctx.resume() to unsuspend), so audio isn't interrupted.
+  // Solution: AudioContext → MediaStreamDestination → audioRef.srcObject
+  // Created AFTER getUserMedia (await call() resolved).
+  // When call connects, onCallAnswered replaces srcObject with remote stream.
   const ringbackCtxRef = useRef<AudioContext | null>(null);
   const ringbackPlayingRef = useRef(false);
 
-  // Phase 1: create AudioContext (call this BEFORE simpleUser.call)
-  function prepareRingback() {
-    if (ringbackCtxRef.current) return;
-    ringbackCtxRef.current = new AudioContext();
-    log("Ringback AudioContext prepared");
-  }
-
-  // Phase 2: start oscillators (call this AFTER simpleUser.call resolves)
-  async function startRingback() {
-    const ctx = ringbackCtxRef.current;
-    if (!ctx || ringbackPlayingRef.current) return;
+  function startRingback() {
+    if (ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = true;
-
     try {
-      // Resume context — getUserMedia may have suspended it
-      if (ctx.state === "suspended") {
-        await ctx.resume();
-        log("Ringback AudioContext resumed from suspended");
-      }
+      const ctx = new AudioContext();
+      ringbackCtxRef.current = ctx;
+      const dest = ctx.createMediaStreamDestination();
 
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
@@ -285,9 +273,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       osc2.frequency.value = 480;
       osc1.connect(gain);
       osc2.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(dest); // → MediaStream, not ctx.destination
       gain.gain.value = 0.0001;
-
       osc1.start();
       osc2.start();
 
@@ -297,7 +284,14 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         gain.gain.setValueAtTime(0.15, base + i * 6);
         gain.gain.setValueAtTime(0.0001, base + i * 6 + 2);
       }
-      log("Ringback playing (ctx.state=" + ctx.state + ")");
+
+      // Pipe through audioRef (SIP element) — Chrome routes srcObject
+      // through the communications device (same as WebRTC call audio)
+      if (audioRef.current) {
+        audioRef.current.srcObject = dest.stream;
+        audioRef.current.play().catch(() => {});
+      }
+      log("Ringback playing via audioRef.srcObject");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
@@ -309,6 +303,10 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     if (ringbackCtxRef.current) {
       ringbackCtxRef.current.close().catch(() => {});
       ringbackCtxRef.current = null;
+    }
+    // Clear srcObject so onCallAnswered can set the remote stream
+    if (audioRef.current) {
+      audioRef.current.srcObject = null;
     }
     log("Ringback stopped");
   }
@@ -365,9 +363,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     const target = `sip:${dialNum}@${SIP_DOMAIN}`;
     log(`Dialing ${target}...`);
     setCallState("connecting");
-
-    // Phase 1: create AudioContext NOW (in click handler = correct device routing)
-    prepareRingback();
 
     try {
       const simpleUser = telnyxClientRef.current;
