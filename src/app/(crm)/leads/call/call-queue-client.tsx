@@ -251,7 +251,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   function startRingback() {
     stopRingback();
     const audio = new Audio("/ringback.mp3?v=" + Date.now());
-    audio.loop = true;
+    // NO loop — the 60s MP3 has 10 ring cycles built in.
+    // MP3 loop causes broken audio artifacts at the loop point.
     audio.volume = 1.0;
     ringbackElRef.current = audio;
     audio.play()
