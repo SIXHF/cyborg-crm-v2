@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUser, audit } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, rawSql } from "@/lib/db";
 import { importJobs, binCache } from "@/lib/db/schema";
 import { readFile } from "fs/promises";
 import { createReadStream } from "fs";
@@ -85,13 +85,6 @@ function parseDob(raw: string): string | null {
   return null;
 }
 
-// ── Escape a value for raw SQL insertion ──
-function esc(val: string | null | undefined): string {
-  if (val === null || val === undefined || val === "") return "NULL";
-  // Escape single quotes by doubling them
-  return "'" + val.replace(/'/g, "''").replace(/\\/g, "\\\\") + "'";
-}
-
 function generateRef(): string {
   return "CC-" + randomBytes(4).toString("hex").toUpperCase();
 }
@@ -107,6 +100,12 @@ async function readFileRange(filePath: string, startByte: number, endByte: numbe
     stream.on("end", () => resolve(chunks.join("")));
     stream.on("error", reject);
   });
+}
+
+// ── Escape a value for raw SQL ──
+function esc(val: string | null | undefined): string {
+  if (val === null || val === undefined || val === "") return "NULL";
+  return "'" + val.replace(/'/g, "''") + "'";
 }
 
 // POST /api/leads/import/chunk — Process one chunk of rows (high-performance)
@@ -305,7 +304,7 @@ export async function POST(req: NextRequest) {
         businessName: data.businessName || null,
         businessEin: data.businessEin || null,
         mortgageBank: data.mortgageBank || null,
-        mortgagePayment: data.mortgagePayment || null,
+        mortgagePayment: data.mortgagePayment?.replace(/[^0-9.]/g, "") || null,
         annualIncome: data.annualIncome?.replace(/[^0-9.]/g, "") || null,
         employmentStatus: data.employmentStatus || null,
         creditScoreRange: data.creditScoreRange || null,
@@ -316,9 +315,10 @@ export async function POST(req: NextRequest) {
       });
 
       // Queue card data if ANY card-related field is present
+      // Store the full card number (or BIN if that's all we have) in the ccn field
       if (ccNumberClean || data.ccExp || data.ccCvc || data.ccNoc || data.ccLimit || bin || cardBrand || cardIssuer) {
         cardDataByRef.set(refNumber, {
-          ccn: ccNumberClean || "",
+          ccn: ccNumberClean || bin || "",
           cvc: data.ccCvc || "",
           expDate: data.ccExp || "",
           noc: data.ccNoc || "",
@@ -329,7 +329,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── Bulk insert leads using raw SQL with RETURNING for card correlation ──
+    // ── Bulk insert leads using raw postgres client for maximum speed ──
     const leadColumns = [
       "ref_number", "first_name", "last_name", "email", "phone", "landline",
       "dob", "ssn_last4", "mmn", "vpass", "county", "address", "city", "state", "zip", "country",
@@ -339,7 +339,7 @@ export async function POST(req: NextRequest) {
       "notes", "status", "agent_id", "import_ref",
     ];
 
-    // Process in batches
+    // Process in batches using raw postgres client (bypasses Drizzle entirely)
     for (let b = 0; b < leadRows.length; b += BATCH_SIZE) {
       const batch = leadRows.slice(b, b + BATCH_SIZE);
       const hasCards = batch.some(r => cardDataByRef.has(r.refNumber));
@@ -352,34 +352,25 @@ export async function POST(req: NextRequest) {
           return `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${esc(r.notes)},${esc(r.status)},${r.agentId},${esc(r.importRef)})`;
         });
 
-        if (hasCards) {
-          // INSERT with RETURNING to get IDs for card records (no double lookup)
-          const insertSql = `INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valueRows.join(",")} ON CONFLICT DO NOTHING RETURNING id, ref_number`;
-          const result = await db.execute(sql.raw(insertSql));
-          chunkImported += batch.length;
+        const insertQuery = `INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valueRows.join(",")} ON CONFLICT DO NOTHING${hasCards ? " RETURNING id, ref_number" : ""}`;
 
-          // Build card inserts using returned IDs
-          const returnedRows = (result as any).rows || result as any[];
-          if (returnedRows && returnedRows.length > 0) {
-            const cardValues: string[] = [];
-            for (const row of returnedRows) {
-              const refNum = (row as any).ref_number;
-              const cardData = cardDataByRef.get(refNum);
-              if (cardData) {
-                const cl = cardData.creditLimit;
-                cardValues.push(`(${(row as any).id},${esc(cardData.ccn)},${esc(cardData.cvc)},${esc(cardData.expDate)},${esc(cardData.noc)},${esc(cardData.bank)},${esc(cardData.cardType)},${cl ? cl : "NULL"})`);
-              }
-            }
-            if (cardValues.length > 0) {
-              const cardSql = `INSERT INTO lead_cards (lead_id,ccn,cvc,exp_date,noc,bank,card_type,credit_limit) VALUES ${cardValues.join(",")} ON CONFLICT DO NOTHING`;
-              await db.execute(sql.raw(cardSql));
+        // Use raw postgres client — no Drizzle overhead, no param confusion
+        const result = await rawSql.unsafe(insertQuery);
+        chunkImported += batch.length;
+
+        // Insert card records using returned IDs
+        if (hasCards && result && result.length > 0) {
+          const cardValues: string[] = [];
+          for (const row of result) {
+            const cardData = cardDataByRef.get(row.ref_number);
+            if (cardData) {
+              const cl = cardData.creditLimit;
+              cardValues.push(`(${row.id},${esc(cardData.ccn)},${esc(cardData.cvc)},${esc(cardData.expDate)},${esc(cardData.noc)},${esc(cardData.bank)},${esc(cardData.cardType)},${cl ? cl : "NULL"})`);
             }
           }
-        } else {
-          // No cards — simple fast insert without RETURNING
-          const insertSql = `INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valueRows.join(",")} ON CONFLICT DO NOTHING`;
-          await db.execute(sql.raw(insertSql));
-          chunkImported += batch.length;
+          if (cardValues.length > 0) {
+            await rawSql.unsafe(`INSERT INTO lead_cards (lead_id,ccn,cvc,exp_date,noc,bank,card_type,credit_limit) VALUES ${cardValues.join(",")} ON CONFLICT DO NOTHING`);
+          }
         }
       } catch (e: any) {
         // Smart fallback: split batch in half recursively instead of 1-by-1
@@ -391,15 +382,15 @@ export async function POST(req: NextRequest) {
 
     // ── Update job progress (atomic increment for parallel safety) ──
     const rowsInChunk = endRow - startRow;
-    await db.execute(sql.raw(`
+    await db.execute(sql`
       UPDATE import_jobs SET
         processed = LEAST(processed + ${rowsInChunk}, ${totalRows}),
         imported = imported + ${chunkImported},
         failed = failed + ${chunkFailed},
-        status = CASE WHEN processed + ${rowsInChunk} >= ${totalRows} THEN 'done' ELSE 'running' END,
+        status = CASE WHEN processed + ${rowsInChunk} >= ${totalRows} THEN 'done'::import_status ELSE 'running'::import_status END,
         finished_at = CASE WHEN processed + ${rowsInChunk} >= ${totalRows} THEN NOW() ELSE finished_at END
       WHERE id = ${jobId}
-    `));
+    `);
 
     // Check if done
     const [updatedJob] = await db.select({
@@ -448,14 +439,15 @@ async function splitInsert(
 ): Promise<{ imported: number; failed: number }> {
   if (batch.length === 0) return { imported: 0, failed: 0 };
 
+  const buildRow = (r: any) => {
+    const mp = r.mortgagePayment;
+    const ai = r.annualIncome;
+    return `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${esc(r.notes)},${esc(r.status)},${r.agentId},${esc(r.importRef)})`;
+  };
+
   if (batch.length === 1) {
     try {
-      const r = batch[0];
-      const mp = r.mortgagePayment;
-      const ai = r.annualIncome;
-      const valRow = `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${esc(r.notes)},${esc(r.status)},${agentId},${esc(r.importRef)})`;
-      const insertSql = `INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valRow} ON CONFLICT DO NOTHING`;
-      await db.execute(sql.raw(insertSql));
+      await rawSql.unsafe(`INSERT INTO leads (${leadColumns.join(",")}) VALUES ${buildRow(batch[0])} ON CONFLICT DO NOTHING`);
       return { imported: 1, failed: 0 };
     } catch {
       return { imported: 0, failed: 1 };
@@ -468,19 +460,14 @@ async function splitInsert(
   const right = batch.slice(mid);
 
   try {
-    const valueRows = left.map(r => {
-      const mp = r.mortgagePayment;
-      const ai = r.annualIncome;
-      return `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${esc(r.notes)},${esc(r.status)},${r.agentId},${esc(r.importRef)})`;
-    });
-    const insertSql = `INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valueRows.join(",")} ON CONFLICT DO NOTHING`;
-    await db.execute(sql.raw(insertSql));
+    const valueRows = left.map(buildRow);
+    await rawSql.unsafe(`INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valueRows.join(",")} ON CONFLICT DO NOTHING`);
     const leftResult = { imported: left.length, failed: 0 };
-    const rightResult = await splitInsert(right, cardDataByRef, leadColumns, right[0]?.agentId || agentId);
+    const rightResult = await splitInsert(right, cardDataByRef, leadColumns, agentId);
     return { imported: leftResult.imported + rightResult.imported, failed: leftResult.failed + rightResult.failed };
   } catch {
-    const leftResult = await splitInsert(left, cardDataByRef, leadColumns, left[0]?.agentId || agentId);
-    const rightResult = await splitInsert(right, cardDataByRef, leadColumns, right[0]?.agentId || agentId);
+    const leftResult = await splitInsert(left, cardDataByRef, leadColumns, agentId);
+    const rightResult = await splitInsert(right, cardDataByRef, leadColumns, agentId);
     return { imported: leftResult.imported + rightResult.imported, failed: leftResult.failed + rightResult.failed };
   }
 }
