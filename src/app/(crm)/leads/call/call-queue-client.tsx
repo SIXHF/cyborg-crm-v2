@@ -207,76 +207,113 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // Generate US ringback tone as WAV data URI (440Hz + 480Hz, 2s on / 4s off)
-  // Pre-generated as base64 WAV so it works reliably with HTML <audio> element
-  const ringbackWavRef = useRef<string | null>(null);
-  if (!ringbackWavRef.current && typeof window !== "undefined") {
+  // ── Ringback tone using a static MP3-compatible approach ──
+  // Generate the ringback WAV once on mount
+  const ringbackUrlRef = useRef<string | null>(null);
+  const ringbackAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Generate US ringback tone WAV (440Hz + 480Hz, 2s on / 4s off, 30s total)
     try {
       const sampleRate = 8000;
-      const duration = 6; // 2s tone + 4s silence = one cycle
-      const cycles = 5; // 30 seconds total
+      const duration = 6; // one cycle: 2s tone + 4s silence
+      const cycles = 5; // 5 cycles = 30 seconds
       const totalSamples = sampleRate * duration * cycles;
-      const buffer = new ArrayBuffer(44 + totalSamples * 2);
-      const view = new DataView(buffer);
-      // WAV header
-      const writeStr = (offset: number, str: string) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
-      writeStr(0, "RIFF");
-      view.setUint32(4, 36 + totalSamples * 2, true);
-      writeStr(8, "WAVE");
-      writeStr(12, "fmt ");
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true); // PCM
-      view.setUint16(22, 1, true); // mono
-      view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * 2, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      writeStr(36, "data");
-      view.setUint32(40, totalSamples * 2, true);
-      // Generate samples
-      const toneLen = sampleRate * 2; // 2 seconds of tone
+      const buf = new ArrayBuffer(44 + totalSamples * 2);
+      const dv = new DataView(buf);
+      // Write WAV header
+      const ws = (o: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+      ws(0, "RIFF");
+      dv.setUint32(4, 36 + totalSamples * 2, true);
+      ws(8, "WAVE");
+      ws(12, "fmt ");
+      dv.setUint32(16, 16, true);       // chunk size
+      dv.setUint16(20, 1, true);         // PCM
+      dv.setUint16(22, 1, true);         // mono
+      dv.setUint32(24, sampleRate, true); // sample rate
+      dv.setUint32(28, sampleRate * 2, true); // byte rate
+      dv.setUint16(32, 2, true);         // block align
+      dv.setUint16(34, 16, true);        // bits per sample
+      ws(36, "data");
+      dv.setUint32(40, totalSamples * 2, true);
+      // Write samples
+      const toneLen = sampleRate * 2;
       const cycleLen = sampleRate * duration;
       for (let i = 0; i < totalSamples; i++) {
-        const posInCycle = i % cycleLen;
         let sample = 0;
-        if (posInCycle < toneLen) {
+        if ((i % cycleLen) < toneLen) {
           const t = i / sampleRate;
-          sample = Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t);
-          sample = sample * 0.15 * 32767;
+          // Mix 440Hz + 480Hz at moderate volume
+          sample = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.2 * 32767;
         }
-        view.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, sample)), true);
+        dv.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, sample | 0)), true);
       }
-      // Convert to base64 data URI
-      const bytes = new Uint8Array(buffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      ringbackWavRef.current = "data:audio/wav;base64," + btoa(binary);
+      // Create blob URL (more reliable than data URI for audio)
+      const blob = new Blob([buf], { type: "audio/wav" });
+      ringbackUrlRef.current = URL.createObjectURL(blob);
+      console.log("[Ringback] WAV generated, blob URL ready");
     } catch (e) {
-      console.error("Failed to generate ringback WAV:", e);
-    }
-  }
-
-  // Ringback tone: play WAV via <audio> element (reliable across all browsers)
-  const ringbackAudioRef = useRef<HTMLAudioElement | null>(null);
-  useEffect(() => {
-    if (callState === "ringing" && ringbackWavRef.current) {
-      const audio = new Audio(ringbackWavRef.current);
-      audio.loop = true;
-      audio.volume = 0.5;
-      audio.play().catch(e => console.error("Ringback play failed:", e));
-      ringbackAudioRef.current = audio;
-    } else {
-      if (ringbackAudioRef.current) {
-        ringbackAudioRef.current.pause();
-        ringbackAudioRef.current.currentTime = 0;
-        ringbackAudioRef.current = null;
-      }
+      console.error("[Ringback] WAV generation failed:", e);
     }
     return () => {
-      if (ringbackAudioRef.current) {
-        ringbackAudioRef.current.pause();
-        ringbackAudioRef.current = null;
-      }
+      if (ringbackUrlRef.current) URL.revokeObjectURL(ringbackUrlRef.current);
+    };
+  }, []);
+
+  // Play/stop ringback based on call state
+  // Trigger on BOTH "connecting" and "ringing" since the SIP state
+  // transition to "Establishing" may not always fire
+  useEffect(() => {
+    const shouldPlay = (callState === "connecting" || callState === "ringing") && !!ringbackUrlRef.current;
+
+    if (shouldPlay && !ringbackAudioRef.current) {
+      console.log("[Ringback] Starting playback, callState:", callState);
+      const audio = new Audio(ringbackUrlRef.current!);
+      audio.loop = true;
+      audio.volume = 0.6;
+      ringbackAudioRef.current = audio;
+      // play() returns a promise — log any failure
+      audio.play().then(() => {
+        console.log("[Ringback] Playing successfully");
+      }).catch(e => {
+        console.error("[Ringback] play() rejected:", e.message);
+        // Fallback: try AudioContext directly as last resort
+        try {
+          const ctx = new AudioContext();
+          const osc1 = ctx.createOscillator();
+          const osc2 = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc1.frequency.value = 440;
+          osc2.frequency.value = 480;
+          osc1.connect(gain);
+          osc2.connect(gain);
+          gain.connect(ctx.destination);
+          gain.gain.value = 0.15;
+          osc1.start();
+          osc2.start();
+          console.log("[Ringback] Fallback AudioContext playing");
+          // Store for cleanup
+          (ringbackAudioRef.current as any).__fallbackCtx = ctx;
+          (ringbackAudioRef.current as any).__fallbackOsc = [osc1, osc2];
+        } catch (e2) {
+          console.error("[Ringback] All audio methods failed:", e2);
+        }
+      });
+    } else if (!shouldPlay && ringbackAudioRef.current) {
+      console.log("[Ringback] Stopping playback, callState:", callState);
+      ringbackAudioRef.current.pause();
+      ringbackAudioRef.current.currentTime = 0;
+      // Cleanup fallback if it was used
+      try {
+        const fb = ringbackAudioRef.current as any;
+        if (fb.__fallbackOsc) fb.__fallbackOsc.forEach((o: any) => { try { o.stop(); } catch {} });
+        if (fb.__fallbackCtx) fb.__fallbackCtx.close();
+      } catch {}
+      ringbackAudioRef.current = null;
+    }
+
+    return () => {
+      // Don't cleanup on re-render if still playing — only cleanup on unmount
     };
   }, [callState]);
 
@@ -309,6 +346,23 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
 
     try {
       const simpleUser = telnyxClientRef.current;
+
+      // Set up a delegate to monitor session state BEFORE the call starts
+      // This ensures we don't miss the "Establishing" transition
+      const origDelegate = simpleUser.delegate;
+      const sessionStateHandler = (state: any) => {
+        log(`Session state: ${state}`);
+        if (state === "Establishing") {
+          setCallState("ringing");
+        } else if (state === "Established") {
+          setCallState("active");
+        } else if (state === "Terminated") {
+          setCallState("ended");
+          setShowDisposition(true);
+          activeCallRef.current = null;
+        }
+      };
+
       await simpleUser.call(target, undefined, {
         sessionDescriptionHandlerOptions: {
           constraints: { audio: true, video: false },
@@ -316,20 +370,17 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       });
       activeCallRef.current = simpleUser.session;
 
-      // Monitor session state
+      // Attach state listener immediately after call() resolves
       if (simpleUser.session) {
-        simpleUser.session.stateChange.addListener((state: any) => {
-          log(`Session state: ${state}`);
-          if (state === "Establishing") {
-            setCallState("ringing");
-          } else if (state === "Established") {
-            setCallState("active");
-          } else if (state === "Terminated") {
-            setCallState("ended");
-            setShowDisposition(true);
-            activeCallRef.current = null;
-          }
-        });
+        simpleUser.session.stateChange.addListener(sessionStateHandler);
+        // Check if we already missed a state change
+        const currentState = simpleUser.session.state;
+        log(`Session initial state: ${currentState}`);
+        if (currentState === "Establishing") {
+          setCallState("ringing");
+        } else if (currentState === "Established") {
+          setCallState("active");
+        }
       }
     } catch (e: any) {
       log(`Call failed: ${e.message}`);
