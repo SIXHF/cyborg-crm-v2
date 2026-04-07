@@ -127,8 +127,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         const simpleUser = new SimpleUser(server, {
           aor,
           media: {
-            // DON'T pass remote audio element — we handle it manually
-            // in onCallAnswered to prevent SIP.js from killing ringback
+            remote: { audio: audioRef.current! },
           },
           userAgentOptions: {
             authorizationUsername: authUser,
@@ -155,27 +154,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               log("Call answered");
               stopRingback();
               setCallState("active");
-              // Manually attach remote media (we don't pass audio element to
-              // SimpleUser to prevent it from killing ringback during setup)
-              try {
-                const client = telnyxClientRef.current;
-                if (client?.session?.sessionDescriptionHandler) {
-                  const sdh = client.session.sessionDescriptionHandler;
-                  const pc = sdh.peerConnection as RTCPeerConnection;
-                  if (pc) {
-                    const receivers = pc.getReceivers();
-                    const audioReceiver = receivers.find((r: any) => r.track?.kind === "audio");
-                    if (audioReceiver?.track && audioRef.current) {
-                      const stream = new MediaStream([audioReceiver.track]);
-                      audioRef.current.srcObject = stream;
-                      audioRef.current.play().catch(() => {});
-                      log("Remote audio attached manually");
-                    }
-                  }
-                }
-              } catch (e: any) {
-                log("Remote audio attach error: " + e.message);
-              }
             },
             onCallReceived: async () => {
               log("Incoming call — auto-answer disabled");
@@ -249,19 +227,40 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone — static WAV on dedicated <audio> element ──
-  // We no longer pass an audio element to SIP.js SimpleUser, so SIP.js
-  // cannot interfere with ANY audio element during call setup.
-  // Remote audio is attached manually only when the call is answered.
+  // ── Ringback tone ──
+  // Chrome's getUserMedia() (called by SIP.js for microphone access) triggers
+  // the audio subsystem to enter "call mode" which interrupts/suspends all
+  // other audio on the page (AudioContext, <audio> elements, everything).
+  //
+  // The ONLY way to survive this: acquire the microphone FIRST via getUserMedia,
+  // THEN start the ringback. Once we're already in "call mode", new audio
+  // sources work fine.
   const ringbackRef = useRef<HTMLAudioElement>(null);
   const ringbackPlayingRef = useRef(false);
+  const micStreamRef = useRef<MediaStream | null>(null);
 
-  function startRingback() {
-    const el = ringbackRef.current;
-    if (!el || ringbackPlayingRef.current) return;
+  async function startRingback() {
+    if (ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = true;
-    el.currentTime = 0;
-    el.play().then(() => log("Ringback playing")).catch(e => log("Ringback play failed: " + e.message));
+
+    try {
+      // Step 1: Acquire microphone FIRST — this puts Chrome into "call mode"
+      // Once in call mode, other audio sources are no longer interrupted
+      if (!micStreamRef.current) {
+        micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+        log("Mic acquired for ringback stability");
+      }
+
+      // Step 2: NOW play the ringback — Chrome is already in "call mode"
+      const el = ringbackRef.current;
+      if (el) {
+        el.currentTime = 0;
+        await el.play();
+        log("Ringback playing");
+      }
+    } catch (e: any) {
+      log("Ringback error: " + e.message);
+    }
   }
 
   function stopRingback() {
@@ -269,6 +268,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     ringbackPlayingRef.current = false;
     const el = ringbackRef.current;
     if (el) { el.pause(); el.currentTime = 0; }
+    // Don't release mic here — SIP.js needs it for the call
     log("Ringback stopped");
   }
 
@@ -325,8 +325,10 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     log(`Dialing ${target}...`);
     setCallState("connecting");
 
-    // Start ringback BEFORE any await (user gesture context required)
-    startRingback();
+    // Start ringback — getUserMedia first to enter Chrome "call mode",
+    // then play audio. This MUST happen before simpleUser.call() because
+    // call() also triggers getUserMedia which would interrupt our audio.
+    await startRingback();
 
     try {
       const simpleUser = telnyxClientRef.current;
