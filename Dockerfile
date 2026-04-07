@@ -27,8 +27,13 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Include migration SQL and seed script for startup
+# Include postgres + bcryptjs modules for migration script
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules/postgres
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bcryptjs ./node_modules/bcryptjs
+
+# Include migration SQL, migrate script, and startup script
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.js ./migrate.js
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/startup.sh ./startup.sh
 RUN chmod +x ./startup.sh
 
