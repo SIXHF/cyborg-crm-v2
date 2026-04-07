@@ -127,9 +127,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         const simpleUser = new SimpleUser(server, {
           aor,
           media: {
-            // No remote audio element — we attach it manually in onCallAnswered.
-            // Passing it here lets SIP.js call setupRemoteMedia/cleanupMedia
-            // which interferes with audio elements during call setup.
+            remote: { audio: audioRef.current! },
           },
           userAgentOptions: {
             authorizationUsername: authUser,
@@ -158,21 +156,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               log("Call answered");
               stopRingback();
               setCallState("active");
-              // Manually attach remote audio (we don't pass audio element to SimpleUser)
-              try {
-                const client = telnyxClientRef.current;
-                const pc = client?.session?.sessionDescriptionHandler?.peerConnection as RTCPeerConnection | undefined;
-                if (pc && audioRef.current) {
-                  const track = pc.getReceivers().find((r: any) => r.track?.kind === "audio")?.track;
-                  if (track) {
-                    audioRef.current.srcObject = new MediaStream([track]);
-                    audioRef.current.play().catch(() => {});
-                    log("Remote audio attached");
-                  }
-                }
-              } catch (e: any) {
-                log("Remote audio error: " + e.message);
-              }
             },
             onCallReceived: async () => {
               log("Incoming call — auto-answer disabled");
@@ -246,43 +229,20 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone via hidden iframe ──
-  // Chrome applies WebRTC audio processing (echo cancellation, noise
-  // suppression, AGC) to ALL audio on a page with active getUserMedia.
-  // This corrupts/mutes our ringback regardless of method (AudioContext,
-  // <audio> elements, MediaStreams — all affected).
+  // ── Ringback tone ──
+  // Chrome mutes ALL local audio (AudioContext, <audio>, MediaStream, iframe)
+  // during WebRTC calls. No code-level workaround exists.
+  // Instead, rely on the SIP server's in-band ringback via earlyMedia: true.
+  // The 183 Session Progress response includes RTP audio that SIP.js plays
+  // through audioRef — this IS WebRTC audio so Chrome doesn't mute it.
   //
-  // The iframe is a SEPARATE browsing context. Chrome's WebRTC audio
-  // processing from the parent page does NOT affect it. The iframe
-  // loads ringback-player.html with an <audio> element and responds
-  // to postMessage commands.
-  const ringbackIframeRef = useRef<HTMLIFrameElement | null>(null);
-
-  useEffect(() => {
-    const iframe = document.createElement("iframe");
-    iframe.src = "/ringback-player.html";
-    iframe.style.display = "none";
-    iframe.allow = "autoplay";
-    document.body.appendChild(iframe);
-    ringbackIframeRef.current = iframe;
-    return () => { iframe.remove(); };
-  }, []);
-
+  // startRingback/stopRingback are kept as no-ops for the call flow logic.
   function startRingback() {
-    stopRingback();
-    const iframe = ringbackIframeRef.current;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.postMessage("play", "*");
-      log("Ringback playing (iframe)");
-    }
+    log("Ringback: waiting for server early media (183)");
   }
 
   function stopRingback() {
-    const iframe = ringbackIframeRef.current;
-    if (iframe?.contentWindow) {
-      iframe.contentWindow.postMessage("stop", "*");
-    }
-    log("Ringback stopped");
+    // Server early media stops automatically when call connects
   }
 
   // Safety net: stop ringback when call becomes active/ended/idle
@@ -359,7 +319,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
 
       await simpleUser.call(
         target,
-        {}, // InviterOptions
+        { earlyMedia: true }, // Enable 183 early media — server provides ringback
         {
           sessionDescriptionHandlerOptions: {
             constraints: { audio: true, video: false },
