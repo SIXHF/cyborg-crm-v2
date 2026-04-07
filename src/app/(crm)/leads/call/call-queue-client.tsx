@@ -250,12 +250,18 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const ringbackElRef = useRef<HTMLAudioElement | null>(null);
 
   function startRingback() {
-    // Always clean up first (fixes second call having no ring)
     stopRingback();
     try {
       const audio = new Audio("/ringback.mp3");
-      audio.loop = true;
       audio.volume = 1.0;
+      // Do NOT use loop — Chrome kills looped audio during WebRTC.
+      // Instead, manually restart on 'ended' event.
+      audio.addEventListener("ended", function restart() {
+        if (ringbackElRef.current === audio) {
+          audio.currentTime = 0;
+          audio.play().catch(() => {});
+        }
+      });
       ringbackElRef.current = audio;
       audio.play()
         .then(() => log("Ringback playing"))
