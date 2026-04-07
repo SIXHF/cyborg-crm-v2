@@ -247,22 +247,36 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
-  // Must use AudioContext (not <audio> element) because after getUserMedia,
-  // Chrome routes <audio> elements to the "default" device but WebRTC goes
-  // to the "communications" device. AudioContext created AFTER getUserMedia
-  // automatically uses the communications device — same output as the call.
+  // The problem: getUserMedia switches Chrome to "communications mode" which
+  // disrupts all audio. AudioContext created before getUserMedia → gets suspended.
+  // AudioContext created after getUserMedia → routes to wrong device.
+  // <audio> element → routes to wrong device after getUserMedia.
   //
-  // Oscillators run continuously, gain envelope creates 2s on / 4s off pattern.
-  // Created after await simpleUser.call() (getUserMedia done, comms mode active).
+  // Solution: create AudioContext BEFORE getUserMedia (click handler = correct
+  // audio device routing), but start oscillators AFTER getUserMedia completes
+  // (call ctx.resume() to unsuspend), so audio isn't interrupted.
   const ringbackCtxRef = useRef<AudioContext | null>(null);
   const ringbackPlayingRef = useRef(false);
 
-  function startRingback() {
-    if (ringbackPlayingRef.current) return;
+  // Phase 1: create AudioContext (call this BEFORE simpleUser.call)
+  function prepareRingback() {
+    if (ringbackCtxRef.current) return;
+    ringbackCtxRef.current = new AudioContext();
+    log("Ringback AudioContext prepared");
+  }
+
+  // Phase 2: start oscillators (call this AFTER simpleUser.call resolves)
+  async function startRingback() {
+    const ctx = ringbackCtxRef.current;
+    if (!ctx || ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = true;
+
     try {
-      const ctx = new AudioContext();
-      ringbackCtxRef.current = ctx;
+      // Resume context — getUserMedia may have suspended it
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+        log("Ringback AudioContext resumed from suspended");
+      }
 
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
@@ -272,18 +286,18 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       osc1.connect(gain);
       osc2.connect(gain);
       gain.connect(ctx.destination);
-      gain.gain.value = 0.0001; // start near-silent
+      gain.gain.value = 0.0001;
 
       osc1.start();
       osc2.start();
 
-      // Gain envelope: 2s on / 4s off, 30 cycles (3 minutes)
+      // Gain envelope: 2s on / 4s off
       const base = ctx.currentTime;
       for (let i = 0; i < 30; i++) {
-        gain.gain.setValueAtTime(0.15, base + i * 6);       // ON
-        gain.gain.setValueAtTime(0.0001, base + i * 6 + 2); // OFF (keep alive)
+        gain.gain.setValueAtTime(0.15, base + i * 6);
+        gain.gain.setValueAtTime(0.0001, base + i * 6 + 2);
       }
-      log("Ringback playing");
+      log("Ringback playing (ctx.state=" + ctx.state + ")");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
@@ -352,8 +366,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     log(`Dialing ${target}...`);
     setCallState("connecting");
 
-    // Do NOT start ringback here — getUserMedia in call() would kill it.
-    // Ringback starts in onProgress handler after getUserMedia completes.
+    // Phase 1: create AudioContext NOW (in click handler = correct device routing)
+    prepareRingback();
 
     try {
       const simpleUser = telnyxClientRef.current;
