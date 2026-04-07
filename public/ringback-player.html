@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html><body>
+<audio id="ring" loop preload="auto"></audio>
+<script>
+const audio = document.getElementById('ring');
+audio.src = '/ringback.mp3';
+window.addEventListener('message', function(e) {
+  if (e.data === 'play') {
+    audio.currentTime = 0;
+    audio.volume = 1.0;
+    audio.play().catch(() => {});
+  } else if (e.data === 'stop') {
+    audio.pause();
+    audio.currentTime = 0;
+  }
+});
+</script>
+</body></html>

@@ -246,65 +246,41 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone ──
-  // Chrome mutes ALL non-WebRTC audio during calls. AudioContext, <audio>,
-  // MediaStream — all silently muted. The ONLY thing Chrome plays:
-  // audioRef.srcObject when it contains a WebRTC-associated stream.
+  // ── Ringback tone via hidden iframe ──
+  // Chrome applies WebRTC audio processing (echo cancellation, noise
+  // suppression, AGC) to ALL audio on a page with active getUserMedia.
+  // This corrupts/mutes our ringback regardless of method (AudioContext,
+  // <audio> elements, MediaStreams — all affected).
   //
-  // Solution: create ringback as a MediaStream track via AudioContext →
-  // MediaStreamDestination, then set it as audioRef.srcObject. Since
-  // audioRef has autoPlay and Chrome treats srcObject streams from
-  // the same page as the PeerConnection as "communications audio",
-  // the ringback plays through the call audio path.
-  const ringbackCtxRef = useRef<AudioContext | null>(null);
+  // The iframe is a SEPARATE browsing context. Chrome's WebRTC audio
+  // processing from the parent page does NOT affect it. The iframe
+  // loads ringback-player.html with an <audio> element and responds
+  // to postMessage commands.
+  const ringbackIframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  const ringbackAudioElRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    const iframe = document.createElement("iframe");
+    iframe.src = "/ringback-player.html";
+    iframe.style.display = "none";
+    iframe.allow = "autoplay";
+    document.body.appendChild(iframe);
+    ringbackIframeRef.current = iframe;
+    return () => { iframe.remove(); };
+  }, []);
 
   function startRingback() {
     stopRingback();
-    try {
-      // Route the MP3 file through AudioContext → MediaStream → audioRef
-      // The MP3 plays fine on its own. AudioContext routes it through
-      // a MediaStreamDestination. audioRef.srcObject plays it as WebRTC audio.
-      const ctx = new AudioContext();
-      ringbackCtxRef.current = ctx;
-
-      const mp3 = new Audio("/ringback.mp3?v=" + Date.now());
-      mp3.crossOrigin = "anonymous"; // required for createMediaElementSource
-      mp3.loop = true;
-      ringbackAudioElRef.current = mp3;
-
-      const source = ctx.createMediaElementSource(mp3);
-      const dest = ctx.createMediaStreamDestination();
-      source.connect(dest);
-
-      // Set the routed stream on audioRef (WebRTC audio element)
-      if (audioRef.current) {
-        audioRef.current.srcObject = dest.stream;
-        audioRef.current.play().catch(() => {});
-      }
-
-      // Start the MP3 playback (feeds into AudioContext)
-      mp3.play()
-        .then(() => log("Ringback playing (MP3 → AudioContext → audioRef)"))
-        .catch(e => log("Ringback failed: " + e.message));
-    } catch (e: any) {
-      log("Ringback error: " + e.message);
+    const iframe = ringbackIframeRef.current;
+    if (iframe?.contentWindow) {
+      iframe.contentWindow.postMessage("play", "*");
+      log("Ringback playing (iframe)");
     }
   }
 
   function stopRingback() {
-    if (ringbackAudioElRef.current) {
-      ringbackAudioElRef.current.pause();
-      ringbackAudioElRef.current.src = "";
-      ringbackAudioElRef.current = null;
-    }
-    if (ringbackCtxRef.current) {
-      ringbackCtxRef.current.close().catch(() => {});
-      ringbackCtxRef.current = null;
-    }
-    if (audioRef.current) {
-      audioRef.current.srcObject = null;
+    const iframe = ringbackIframeRef.current;
+    if (iframe?.contentWindow) {
+      iframe.contentWindow.postMessage("stop", "*");
     }
     log("Ringback stopped");
   }
