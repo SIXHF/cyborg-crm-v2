@@ -269,46 +269,32 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
-  // ctx.destination goes to wrong output after getUserMedia.
-  // <audio src> goes to wrong output after getUserMedia.
-  // ONLY srcObject on the SIP audio element routes correctly because
-  // Chrome treats it as WebRTC/communications audio.
-  //
-  // Solution: AudioContext → MediaStreamDestination → audioRef.srcObject
-  // Created AFTER getUserMedia (await call() resolved).
-  // When call connects, onCallAnswered replaces srcObject with remote stream.
-  const ringbackCtxRef = useRef<AudioContext | null>(null);
-  const ringbackPlayingRef = useRef(false);
+  const ringbackElRef = useRef<HTMLAudioElement | null>(null);
 
   function startRingback() {
-    if (ringbackPlayingRef.current) return;
-    ringbackPlayingRef.current = true;
+    // Always clean up first (fixes second call having no ring)
+    stopRingback();
     try {
-      // Windows audio ducking is already active (mic pre-acquired at registration).
-      // Simple <audio> at max volume — ducked to ~20% but still audible.
-      const audio = document.createElement("audio");
-      audio.id = "ringback-audio";
-      audio.src = "/ringback.wav";
+      const audio = new Audio("/ringback.wav");
       audio.loop = true;
       audio.volume = 1.0;
-      document.body.appendChild(audio);
-      audio.play().then(() => log("Ringback playing")).catch(e => log("Ringback failed: " + e.message));
+      ringbackElRef.current = audio;
+      audio.play()
+        .then(() => log("Ringback playing"))
+        .catch(e => log("Ringback failed: " + e.message));
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
   }
 
   function stopRingback() {
-    if (!ringbackPlayingRef.current) return;
-    ringbackPlayingRef.current = false;
-    // Remove detached audio element
-    const el = document.getElementById("ringback-audio") as HTMLAudioElement;
-    if (el) { el.pause(); el.remove(); }
-    if (ringbackCtxRef.current) {
-      ringbackCtxRef.current.close().catch(() => {});
-      ringbackCtxRef.current = null;
+    const el = ringbackElRef.current;
+    if (el) {
+      el.pause();
+      el.src = "";
+      ringbackElRef.current = null;
+      log("Ringback stopped");
     }
-    log("Ringback stopped");
   }
 
   // Safety net: stop ringback when call becomes active/ended/idle
