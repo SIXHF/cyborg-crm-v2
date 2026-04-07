@@ -311,15 +311,21 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     log(`Dialing ${target}...`);
     setCallState("connecting");
 
-    // Start ringback HERE — BEFORE any await — so AudioContext is created
-    // directly in the user's click gesture (Chrome requires this)
+    // Start ringback BEFORE any await (user gesture context required)
     startRingback();
 
     try {
       const simpleUser = telnyxClientRef.current;
 
-      // Use earlyMedia so 183 Session Progress auto-attaches remote audio
-      // Use requestDelegate.onProgress to detect 180 Ringing vs 183 early media
+      // Clean up any stale session from a previous call
+      // SimpleUser only allows one call at a time — "Session already exists" error
+      if (simpleUser.session) {
+        log("Cleaning up stale session before new call");
+        try { await simpleUser.hangup(); } catch {}
+        // Small delay to let SIP.js clean up internal state
+        await new Promise(r => setTimeout(r, 200));
+      }
+
       await simpleUser.call(
         target,
         {}, // InviterOptions
@@ -370,6 +376,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }
 
   function endCall() {
+    stopRingback();
     if (telnyxClientRef.current) {
       try {
         telnyxClientRef.current.hangup();
@@ -377,6 +384,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         log(`Hangup error: ${e.message}`);
       }
     }
+    activeCallRef.current = null;
     setCallState("ended");
     setShowDisposition(true);
   }
