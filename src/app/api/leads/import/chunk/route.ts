@@ -9,7 +9,7 @@ import { parseLine } from "../route";
 
 export const maxDuration = 60;
 
-const CHUNK_SIZE = 5000;
+const CHUNK_SIZE = 10000;
 
 // ── Parse DOB to YYYY-MM-DD format ──
 function parseDob(raw: string): string | null {
@@ -161,10 +161,13 @@ export async function POST(req: NextRequest) {
     let chunkImported = 0;
     let chunkFailed = 0;
     const failedRows: { row: number; reason: string }[] = [];
-    const batchSize = 500;
+    const batchSize = 2000; // Larger batches = fewer round-trips = faster
+    // Disable unique checks for speed during import
+    try { await db.execute(sql`SET LOCAL synchronize_seqscans = off`); } catch {}
+
     // Load BIN cache for fast lookups during import (no external API calls)
     const binCacheRows = await db.select({ bin6: binCache.bin6, brand: binCache.brand, type: binCache.type, issuer: binCache.issuer, country: binCache.country })
-      .from(binCache).limit(100000);
+      .from(binCache).limit(500000);
     const binLookup = new Map(binCacheRows.map(r => [r.bin6, r]));
 
     let rowBatch: any[] = [];
@@ -279,8 +282,8 @@ export async function POST(req: NextRequest) {
         importRef,
       });
 
-      // Queue card data
-      if (ccNumberClean || data.ccExp || data.ccCvc || data.ccNoc || data.ccLimit) {
+      // Queue card data — create card record if ANY card-related field is present
+      if (ccNumberClean || data.ccExp || data.ccCvc || data.ccNoc || data.ccLimit || bin || cardBrand || cardIssuer) {
         cardBatch.push({
           refNumber,
           data: {
