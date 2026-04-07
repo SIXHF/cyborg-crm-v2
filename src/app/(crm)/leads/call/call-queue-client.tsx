@@ -207,54 +207,76 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // Ringback tone: US pattern 440Hz + 480Hz, 2s on / 4s off
-  // Uses a looping approach with explicit start/stop for browser compatibility
-  useEffect(() => {
-    if (callState !== "ringing") return;
-    let cancelled = false;
-    let audioCtx: AudioContext | null = null;
-    let timeoutId: NodeJS.Timeout | null = null;
-
-    async function playRingback() {
-      try {
-        audioCtx = new AudioContext();
-        await audioCtx.resume(); // Required for browser autoplay policy
-
-        while (!cancelled) {
-          // Create fresh oscillators each cycle (oscillators can only be started once)
-          const osc1 = audioCtx.createOscillator();
-          const osc2 = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc1.frequency.value = 440;
-          osc2.frequency.value = 480;
-          osc1.connect(gain);
-          osc2.connect(gain);
-          gain.connect(audioCtx.destination);
-          gain.gain.value = 0.15;
-
-          // Play for 2 seconds
-          osc1.start();
-          osc2.start();
-          await new Promise<void>(r => { timeoutId = setTimeout(r, 2000); });
-          osc1.stop();
-          osc2.stop();
-
-          if (cancelled) break;
-
-          // Silence for 4 seconds
-          await new Promise<void>(r => { timeoutId = setTimeout(r, 4000); });
+  // Generate US ringback tone as WAV data URI (440Hz + 480Hz, 2s on / 4s off)
+  // Pre-generated as base64 WAV so it works reliably with HTML <audio> element
+  const ringbackWavRef = useRef<string | null>(null);
+  if (!ringbackWavRef.current && typeof window !== "undefined") {
+    try {
+      const sampleRate = 8000;
+      const duration = 6; // 2s tone + 4s silence = one cycle
+      const cycles = 5; // 30 seconds total
+      const totalSamples = sampleRate * duration * cycles;
+      const buffer = new ArrayBuffer(44 + totalSamples * 2);
+      const view = new DataView(buffer);
+      // WAV header
+      const writeStr = (offset: number, str: string) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+      writeStr(0, "RIFF");
+      view.setUint32(4, 36 + totalSamples * 2, true);
+      writeStr(8, "WAVE");
+      writeStr(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, "data");
+      view.setUint32(40, totalSamples * 2, true);
+      // Generate samples
+      const toneLen = sampleRate * 2; // 2 seconds of tone
+      const cycleLen = sampleRate * duration;
+      for (let i = 0; i < totalSamples; i++) {
+        const posInCycle = i % cycleLen;
+        let sample = 0;
+        if (posInCycle < toneLen) {
+          const t = i / sampleRate;
+          sample = Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t);
+          sample = sample * 0.15 * 32767;
         }
-      } catch (e) {
-        console.error("Ringback tone error:", e);
+        view.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, sample)), true);
+      }
+      // Convert to base64 data URI
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      ringbackWavRef.current = "data:audio/wav;base64," + btoa(binary);
+    } catch (e) {
+      console.error("Failed to generate ringback WAV:", e);
+    }
+  }
+
+  // Ringback tone: play WAV via <audio> element (reliable across all browsers)
+  const ringbackAudioRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    if (callState === "ringing" && ringbackWavRef.current) {
+      const audio = new Audio(ringbackWavRef.current);
+      audio.loop = true;
+      audio.volume = 0.5;
+      audio.play().catch(e => console.error("Ringback play failed:", e));
+      ringbackAudioRef.current = audio;
+    } else {
+      if (ringbackAudioRef.current) {
+        ringbackAudioRef.current.pause();
+        ringbackAudioRef.current.currentTime = 0;
+        ringbackAudioRef.current = null;
       }
     }
-
-    playRingback();
-
     return () => {
-      cancelled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      try { audioCtx?.close(); } catch {}
+      if (ringbackAudioRef.current) {
+        ringbackAudioRef.current.pause();
+        ringbackAudioRef.current = null;
+      }
     };
   }, [callState]);
 
