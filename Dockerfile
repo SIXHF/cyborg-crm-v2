@@ -4,7 +4,6 @@ FROM node:20-slim AS base
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --only=production && cp -R node_modules /tmp/prod_node_modules
 RUN npm ci
 
 # Build the app
@@ -28,9 +27,14 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Include migration SQL and seed script for startup
+COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/startup.sh ./startup.sh
+RUN chmod +x ./startup.sh
+
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+CMD ["./startup.sh"]
