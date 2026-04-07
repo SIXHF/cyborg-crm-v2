@@ -78,6 +78,20 @@ export function LeadDetailClient({ data, currentUser }: Props) {
   const [editCardSaving, setEditCardSaving] = useState(false);
   const [deleteCardConfirmId, setDeleteCardConfirmId] = useState<number | null>(null);
 
+  // Forward lead state
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [forwardUsers, setForwardUsers] = useState<{ id: number; fullName: string; role: string }[]>([]);
+  const [forwardToUserId, setForwardToUserId] = useState("");
+  const [forwardNotes, setForwardNotes] = useState("");
+  const [forwardSaving, setForwardSaving] = useState(false);
+  const [forwardUsersLoading, setForwardUsersLoading] = useState(false);
+
+  // Related entity CRUD state
+  const [relatedForm, setRelatedForm] = useState<{ type: string; mode: "add" | "edit"; editId?: number } | null>(null);
+  const [relatedFormData, setRelatedFormData] = useState<Record<string, any>>({});
+  const [relatedSaving, setRelatedSaving] = useState(false);
+  const [relatedDeleteConfirm, setRelatedDeleteConfirm] = useState<{ type: string; id: number } | null>(null);
+
   // Carrier lookup state
   const [carrierLoading, setCarrierLoading] = useState(false);
   const [carrierResult, setCarrierResult] = useState<{ carrier: string; lineType: string } | null>(null);
@@ -307,6 +321,180 @@ export function LeadDetailClient({ data, currentUser }: Props) {
     setEditCardData(data);
   }
 
+  async function openForwardDialog() {
+    setForwardOpen(true);
+    setForwardUsersLoading(true);
+    try {
+      const res = await fetch("/api/users");
+      if (res.ok) {
+        const users = await res.json();
+        setForwardUsers(users.filter((u: any) => u.isActive && (u.role === "admin" || u.role === "processor")));
+      }
+    } catch { /* ignore */ }
+    finally { setForwardUsersLoading(false); }
+  }
+
+  async function forwardLead() {
+    if (!forwardToUserId) return;
+    setForwardSaving(true);
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/forward`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toUserId: forwardToUserId, notes: forwardNotes }),
+      });
+      if (res.ok) {
+        alert("Lead forwarded successfully");
+        setForwardOpen(false);
+        setForwardToUserId("");
+        setForwardNotes("");
+        router.refresh();
+      } else {
+        const d = await res.json();
+        alert(d.error || "Failed to forward lead");
+      }
+    } catch {
+      alert("Failed to forward lead");
+    } finally {
+      setForwardSaving(false);
+    }
+  }
+
+  // Related entity definitions
+  const relatedEntityConfig: Record<string, { fields: { key: string; label: string; type?: string }[]; idKey: string; endpoint: string }> = {
+    cosigners: {
+      fields: [
+        { key: "fullName", label: "Full Name" },
+        { key: "dob", label: "Date of Birth", type: "date" },
+        { key: "phone", label: "Phone" },
+        { key: "email", label: "Email" },
+        { key: "ssn", label: "SSN" },
+        { key: "address", label: "Address" },
+      ],
+      idKey: "cosignerId",
+      endpoint: "cosigners",
+    },
+    employers: {
+      fields: [
+        { key: "employer", label: "Employer" },
+        { key: "position", label: "Position" },
+        { key: "phone", label: "Phone" },
+        { key: "yearFrom", label: "Year From" },
+        { key: "yearTo", label: "Year To" },
+        { key: "isCurrent", label: "Current?", type: "checkbox" },
+      ],
+      idKey: "employerId",
+      endpoint: "employers",
+    },
+    vehicles: {
+      fields: [
+        { key: "year", label: "Year" },
+        { key: "make", label: "Make" },
+        { key: "model", label: "Model" },
+        { key: "color", label: "Color" },
+        { key: "vin", label: "VIN" },
+      ],
+      idKey: "vehicleId",
+      endpoint: "vehicles",
+    },
+    relatives: {
+      fields: [
+        { key: "fullName", label: "Full Name" },
+        { key: "relation", label: "Relation" },
+        { key: "dob", label: "Date of Birth", type: "date" },
+        { key: "phone", label: "Phone" },
+      ],
+      idKey: "relativeId",
+      endpoint: "relatives",
+    },
+    addresses: {
+      fields: [
+        { key: "address", label: "Address" },
+        { key: "city", label: "City" },
+        { key: "state", label: "State" },
+        { key: "zip", label: "ZIP" },
+        { key: "yearFrom", label: "Year From" },
+        { key: "yearTo", label: "Year To" },
+        { key: "isCurrent", label: "Current?", type: "checkbox" },
+      ],
+      idKey: "addressId",
+      endpoint: "addresses",
+    },
+    emails: {
+      fields: [
+        { key: "email", label: "Email" },
+        { key: "label", label: "Label" },
+      ],
+      idKey: "emailId",
+      endpoint: "emails",
+    },
+  };
+
+  function openRelatedAdd(type: string) {
+    const config = relatedEntityConfig[type];
+    const empty: Record<string, any> = {};
+    config.fields.forEach(f => { empty[f.key] = f.type === "checkbox" ? false : ""; });
+    setRelatedFormData(empty);
+    setRelatedForm({ type, mode: "add" });
+  }
+
+  function openRelatedEdit(type: string, record: any) {
+    const config = relatedEntityConfig[type];
+    const data: Record<string, any> = {};
+    config.fields.forEach(f => { data[f.key] = record[f.key] ?? (f.type === "checkbox" ? false : ""); });
+    setRelatedFormData(data);
+    setRelatedForm({ type, mode: "edit", editId: record.id });
+  }
+
+  async function saveRelatedEntity() {
+    if (!relatedForm) return;
+    setRelatedSaving(true);
+    const config = relatedEntityConfig[relatedForm.type];
+    try {
+      const isEdit = relatedForm.mode === "edit";
+      const body = isEdit
+        ? { [config.idKey]: relatedForm.editId, ...relatedFormData }
+        : relatedFormData;
+      const res = await fetch(`/api/leads/${lead.id}/${config.endpoint}`, {
+        method: isEdit ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setRelatedForm(null);
+        setRelatedFormData({});
+        router.refresh();
+      } else {
+        const d = await res.json();
+        alert(d.error || `Failed to ${isEdit ? "update" : "add"} record`);
+      }
+    } catch {
+      alert("Failed to save record");
+    } finally {
+      setRelatedSaving(false);
+    }
+  }
+
+  async function deleteRelatedEntity(type: string, recordId: number) {
+    const config = relatedEntityConfig[type];
+    try {
+      const res = await fetch(`/api/leads/${lead.id}/${config.endpoint}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [config.idKey]: recordId }),
+      });
+      if (res.ok) {
+        setRelatedDeleteConfirm(null);
+        router.refresh();
+      } else {
+        const d = await res.json();
+        alert(d.error || "Failed to delete record");
+      }
+    } catch {
+      alert("Failed to delete record");
+    }
+  }
+
   function InfoRow({ label, value }: { label: string; value: any }) {
     if (!value) return null;
     return (
@@ -334,6 +522,16 @@ export function LeadDetailClient({ data, currentUser }: Props) {
               <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium capitalize border", statusColors[lead.status])}>
                 {lead.status.replace("_", " ")}
               </span>
+              {lead.leadScore != null && (
+                <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium border",
+                  lead.leadScore >= 75 ? "bg-green-500/10 text-green-500 border-green-500/20" :
+                  lead.leadScore >= 50 ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20" :
+                  lead.leadScore >= 25 ? "bg-blue-500/10 text-blue-500 border-blue-500/20" :
+                  "bg-red-500/10 text-red-500 border-red-500/20"
+                )}>
+                  Score: {lead.leadScore}
+                </span>
+              )}
               {agentName && <span className="text-xs text-muted-foreground">Agent: {agentName}</span>}
             </div>
           </div>
@@ -354,6 +552,14 @@ export function LeadDetailClient({ data, currentUser }: Props) {
           >
             <Send className="w-4 h-4" />
             <span className="hidden sm:inline">SMS</span>
+          </button>
+          <button
+            onClick={openForwardDialog}
+            className="h-9 px-3 bg-muted border border-border text-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-muted/80 transition-colors"
+            title="Forward Lead"
+          >
+            <ArrowLeft className="w-4 h-4 rotate-180" />
+            <span className="hidden sm:inline">Forward</span>
           </button>
           <Link
             href={`/leads/${lead.id}/edit`}
@@ -432,6 +638,62 @@ export function LeadDetailClient({ data, currentUser }: Props) {
                 className="h-8 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
               >
                 {smsSending ? "Sending..." : "Send SMS"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forward Dialog */}
+      {forwardOpen && (
+        <div className="bg-card border border-border rounded-xl p-4">
+          <h4 className="font-medium text-sm mb-3 flex items-center gap-2">
+            <ArrowLeft className="w-4 h-4 rotate-180" /> Forward Lead
+          </h4>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Forward To</label>
+              {forwardUsersLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading users...
+                </div>
+              ) : (
+                <select
+                  value={forwardToUserId}
+                  onChange={(e) => setForwardToUserId(e.target.value)}
+                  className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="">-- Select User --</option>
+                  {forwardUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.fullName} ({u.role})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Notes</label>
+              <textarea
+                value={forwardNotes}
+                onChange={(e) => setForwardNotes(e.target.value)}
+                className="w-full h-20 bg-muted border border-border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Add notes for the recipient..."
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setForwardOpen(false); setForwardToUserId(""); setForwardNotes(""); }}
+                className="h-8 px-3 bg-muted border border-border rounded-lg text-sm hover:bg-muted/80"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={forwardLead}
+                disabled={forwardSaving || !forwardToUserId}
+                className="h-8 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
+              >
+                {forwardSaving ? "Forwarding..." : "Forward Lead"}
               </button>
             </div>
           </div>
@@ -571,6 +833,14 @@ export function LeadDetailClient({ data, currentUser }: Props) {
             <InfoRow label="V-Pass" value={lead.vpass} />
             <InfoRow label="Notes" value={lead.notes} />
           </div>
+          {lead.customFields && typeof lead.customFields === "object" && Object.keys(lead.customFields).length > 0 && (
+            <div className="bg-card border border-border rounded-xl p-5">
+              <h3 className="font-semibold mb-3 flex items-center gap-2"><Shield className="w-4 h-4" />Custom Fields</h3>
+              {Object.entries(lead.customFields).map(([key, value]) => (
+                <InfoRow key={key} label={key.replace(/([A-Z])/g, " $1").replace(/^./, (s: string) => s.toUpperCase())} value={String(value ?? "")} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -911,72 +1181,234 @@ export function LeadDetailClient({ data, currentUser }: Props) {
 
       {activeTab === "related" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {cosigners.length > 0 && (
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="font-semibold mb-3">Co-signers ({cosigners.length})</h3>
-              {cosigners.map((c: any) => (
-                <div key={c.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
-                  <p className="font-medium">{c.fullName}</p>
-                  {c.phone && <p className="text-muted-foreground">{formatPhone(c.phone)}</p>}
-                </div>
-              ))}
+          {/* Inline form for add/edit */}
+          {relatedForm && (
+            <div className="col-span-1 lg:col-span-2 bg-card border border-border rounded-xl p-5">
+              <h4 className="font-medium text-sm mb-4 flex items-center gap-2">
+                {relatedForm.mode === "add" ? <Plus className="w-4 h-4" /> : <Edit className="w-4 h-4" />}
+                {relatedForm.mode === "add" ? "Add" : "Edit"} {relatedForm.type.replace(/s$/, "").replace(/^./, (s: string) => s.toUpperCase())}
+              </h4>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {relatedEntityConfig[relatedForm.type].fields.map(f => (
+                  <div key={f.key}>
+                    <label className="block text-xs text-muted-foreground mb-1">{f.label}</label>
+                    {f.type === "checkbox" ? (
+                      <label className="flex items-center gap-2 h-[38px]">
+                        <input
+                          type="checkbox"
+                          checked={!!relatedFormData[f.key]}
+                          onChange={(e) => setRelatedFormData(prev => ({ ...prev, [f.key]: e.target.checked }))}
+                          className="rounded border-border"
+                        />
+                        <span className="text-sm">Yes</span>
+                      </label>
+                    ) : (
+                      <input
+                        type={f.type || "text"}
+                        value={relatedFormData[f.key] || ""}
+                        onChange={(e) => setRelatedFormData(prev => ({ ...prev, [f.key]: e.target.value }))}
+                        className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        placeholder={f.label}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => { setRelatedForm(null); setRelatedFormData({}); }}
+                  className="h-8 px-3 bg-muted border border-border rounded-lg text-sm hover:bg-muted/80"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveRelatedEntity}
+                  disabled={relatedSaving}
+                  className="h-8 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-1"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {relatedSaving ? "Saving..." : "Save"}
+                </button>
+              </div>
             </div>
           )}
-          {employers.length > 0 && (
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="font-semibold mb-3">Employers ({employers.length})</h3>
-              {employers.map((e: any) => (
-                <div key={e.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
-                  <p className="font-medium">{e.employer} {e.isCurrent && <span className="text-green-500 text-xs">(Current)</span>}</p>
-                  {e.position && <p className="text-muted-foreground">{e.position}</p>}
-                </div>
-              ))}
+
+          {/* Cosigners */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Co-signers ({cosigners.length})</h3>
+              <button onClick={() => openRelatedAdd("cosigners")} className="h-7 px-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-primary/90"><Plus className="w-3 h-3" /> Add</button>
             </div>
-          )}
-          {vehicles.length > 0 && (
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="font-semibold mb-3">Vehicles ({vehicles.length})</h3>
-              {vehicles.map((v: any) => (
-                <div key={v.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
-                  <p className="font-medium">{[v.year, v.make, v.model].filter(Boolean).join(" ")}</p>
-                  {v.color && <p className="text-muted-foreground">{v.color}</p>}
+            {cosigners.length === 0 && <p className="text-sm text-muted-foreground py-2">None</p>}
+            {cosigners.map((c: any) => (
+              <div key={c.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{c.fullName}</p>
+                    {c.phone && <p className="text-muted-foreground">{formatPhone(c.phone)}</p>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => openRelatedEdit("cosigners", c)} className="h-6 px-2 bg-muted border border-border rounded text-xs hover:bg-muted/80 flex items-center gap-1"><Edit className="w-3 h-3" /> Edit</button>
+                    {relatedDeleteConfirm?.type === "cosigners" && relatedDeleteConfirm?.id === c.id ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => deleteRelatedEntity("cosigners", c.id)} className="h-6 px-2 bg-red-500 text-white rounded text-xs">Confirm</button>
+                        <button onClick={() => setRelatedDeleteConfirm(null)} className="h-6 px-1 bg-muted rounded text-xs"><X className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRelatedDeleteConfirm({ type: "cosigners", id: c.id })} className="h-6 px-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-xs hover:bg-red-500/20 flex items-center gap-1"><Trash2 className="w-3 h-3" /></button>
+                    )}
+                  </div>
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+
+          {/* Employers */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Employers ({employers.length})</h3>
+              <button onClick={() => openRelatedAdd("employers")} className="h-7 px-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-primary/90"><Plus className="w-3 h-3" /> Add</button>
             </div>
-          )}
-          {relatives.length > 0 && (
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="font-semibold mb-3">Relatives ({relatives.length})</h3>
-              {relatives.map((r: any) => (
-                <div key={r.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
-                  <p className="font-medium">{r.fullName} <span className="text-muted-foreground">({r.relation})</span></p>
+            {employers.length === 0 && <p className="text-sm text-muted-foreground py-2">None</p>}
+            {employers.map((e: any) => (
+              <div key={e.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{e.employer} {e.isCurrent && <span className="text-green-500 text-xs">(Current)</span>}</p>
+                    {e.position && <p className="text-muted-foreground">{e.position}</p>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => openRelatedEdit("employers", e)} className="h-6 px-2 bg-muted border border-border rounded text-xs hover:bg-muted/80 flex items-center gap-1"><Edit className="w-3 h-3" /> Edit</button>
+                    {relatedDeleteConfirm?.type === "employers" && relatedDeleteConfirm?.id === e.id ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => deleteRelatedEntity("employers", e.id)} className="h-6 px-2 bg-red-500 text-white rounded text-xs">Confirm</button>
+                        <button onClick={() => setRelatedDeleteConfirm(null)} className="h-6 px-1 bg-muted rounded text-xs"><X className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRelatedDeleteConfirm({ type: "employers", id: e.id })} className="h-6 px-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-xs hover:bg-red-500/20 flex items-center gap-1"><Trash2 className="w-3 h-3" /></button>
+                    )}
+                  </div>
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+
+          {/* Vehicles */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Vehicles ({vehicles.length})</h3>
+              <button onClick={() => openRelatedAdd("vehicles")} className="h-7 px-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-primary/90"><Plus className="w-3 h-3" /> Add</button>
             </div>
-          )}
-          {addresses.length > 0 && (
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="font-semibold mb-3">Addresses ({addresses.length})</h3>
-              {addresses.map((a: any) => (
-                <div key={a.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
-                  <p className="font-medium">{a.address}, {a.city}, {a.state} {a.zip} {a.isCurrent && <span className="text-green-500 text-xs">(Current)</span>}</p>
+            {vehicles.length === 0 && <p className="text-sm text-muted-foreground py-2">None</p>}
+            {vehicles.map((v: any) => (
+              <div key={v.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{[v.year, v.make, v.model].filter(Boolean).join(" ")}</p>
+                    {v.color && <p className="text-muted-foreground">{v.color}</p>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => openRelatedEdit("vehicles", v)} className="h-6 px-2 bg-muted border border-border rounded text-xs hover:bg-muted/80 flex items-center gap-1"><Edit className="w-3 h-3" /> Edit</button>
+                    {relatedDeleteConfirm?.type === "vehicles" && relatedDeleteConfirm?.id === v.id ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => deleteRelatedEntity("vehicles", v.id)} className="h-6 px-2 bg-red-500 text-white rounded text-xs">Confirm</button>
+                        <button onClick={() => setRelatedDeleteConfirm(null)} className="h-6 px-1 bg-muted rounded text-xs"><X className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRelatedDeleteConfirm({ type: "vehicles", id: v.id })} className="h-6 px-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-xs hover:bg-red-500/20 flex items-center gap-1"><Trash2 className="w-3 h-3" /></button>
+                    )}
+                  </div>
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+
+          {/* Relatives */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Relatives ({relatives.length})</h3>
+              <button onClick={() => openRelatedAdd("relatives")} className="h-7 px-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-primary/90"><Plus className="w-3 h-3" /> Add</button>
             </div>
-          )}
-          {emails.length > 0 && (
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h3 className="font-semibold mb-3">Emails ({emails.length})</h3>
-              {emails.map((e: any) => (
-                <div key={e.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
-                  <p className="font-medium">{e.email} {e.label && <span className="text-muted-foreground">({e.label})</span>}</p>
+            {relatives.length === 0 && <p className="text-sm text-muted-foreground py-2">None</p>}
+            {relatives.map((r: any) => (
+              <div key={r.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{r.fullName} <span className="text-muted-foreground">({r.relation})</span></p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => openRelatedEdit("relatives", r)} className="h-6 px-2 bg-muted border border-border rounded text-xs hover:bg-muted/80 flex items-center gap-1"><Edit className="w-3 h-3" /> Edit</button>
+                    {relatedDeleteConfirm?.type === "relatives" && relatedDeleteConfirm?.id === r.id ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => deleteRelatedEntity("relatives", r.id)} className="h-6 px-2 bg-red-500 text-white rounded text-xs">Confirm</button>
+                        <button onClick={() => setRelatedDeleteConfirm(null)} className="h-6 px-1 bg-muted rounded text-xs"><X className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRelatedDeleteConfirm({ type: "relatives", id: r.id })} className="h-6 px-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-xs hover:bg-red-500/20 flex items-center gap-1"><Trash2 className="w-3 h-3" /></button>
+                    )}
+                  </div>
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+
+          {/* Addresses */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Addresses ({addresses.length})</h3>
+              <button onClick={() => openRelatedAdd("addresses")} className="h-7 px-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-primary/90"><Plus className="w-3 h-3" /> Add</button>
             </div>
-          )}
-          {cosigners.length === 0 && employers.length === 0 && vehicles.length === 0 && relatives.length === 0 && addresses.length === 0 && emails.length === 0 && (
-            <p className="text-center py-12 text-muted-foreground col-span-2">No related records</p>
-          )}
+            {addresses.length === 0 && <p className="text-sm text-muted-foreground py-2">None</p>}
+            {addresses.map((a: any) => (
+              <div key={a.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{a.address}, {a.city}, {a.state} {a.zip} {a.isCurrent && <span className="text-green-500 text-xs">(Current)</span>}</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => openRelatedEdit("addresses", a)} className="h-6 px-2 bg-muted border border-border rounded text-xs hover:bg-muted/80 flex items-center gap-1"><Edit className="w-3 h-3" /> Edit</button>
+                    {relatedDeleteConfirm?.type === "addresses" && relatedDeleteConfirm?.id === a.id ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => deleteRelatedEntity("addresses", a.id)} className="h-6 px-2 bg-red-500 text-white rounded text-xs">Confirm</button>
+                        <button onClick={() => setRelatedDeleteConfirm(null)} className="h-6 px-1 bg-muted rounded text-xs"><X className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRelatedDeleteConfirm({ type: "addresses", id: a.id })} className="h-6 px-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-xs hover:bg-red-500/20 flex items-center gap-1"><Trash2 className="w-3 h-3" /></button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Emails */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Emails ({emails.length})</h3>
+              <button onClick={() => openRelatedAdd("emails")} className="h-7 px-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-primary/90"><Plus className="w-3 h-3" /> Add</button>
+            </div>
+            {emails.length === 0 && <p className="text-sm text-muted-foreground py-2">None</p>}
+            {emails.map((e: any) => (
+              <div key={e.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{e.email} {e.label && <span className="text-muted-foreground">({e.label})</span>}</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => openRelatedEdit("emails", e)} className="h-6 px-2 bg-muted border border-border rounded text-xs hover:bg-muted/80 flex items-center gap-1"><Edit className="w-3 h-3" /> Edit</button>
+                    {relatedDeleteConfirm?.type === "emails" && relatedDeleteConfirm?.id === e.id ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => deleteRelatedEntity("emails", e.id)} className="h-6 px-2 bg-red-500 text-white rounded text-xs">Confirm</button>
+                        <button onClick={() => setRelatedDeleteConfirm(null)} className="h-6 px-1 bg-muted rounded text-xs"><X className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRelatedDeleteConfirm({ type: "emails", id: e.id })} className="h-6 px-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-xs hover:bg-red-500/20 flex items-center gap-1"><Trash2 className="w-3 h-3" /></button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

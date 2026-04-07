@@ -36,8 +36,8 @@ interface Lead {
 }
 
 export function SmsClient({
-  conversations,
-  allMessages,
+  conversations: initialConversations,
+  allMessages: initialMessages,
   leads,
 }: {
   conversations: Conversation[];
@@ -52,6 +52,8 @@ export function SmsClient({
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [conversations, setConversations] = useState<Conversation[]>(initialConversations);
+  const [allMessages, setAllMessages] = useState<Message[]>(initialMessages);
 
   const filteredConversations = useMemo(() => {
     if (!searchQuery) return conversations;
@@ -90,8 +92,43 @@ export function SmsClient({
       const data = await res.json();
       if (res.ok) {
         setSendResult({ ok: true, text: "SMS sent successfully!" });
+        const newMsg: Message = {
+          id: data.id || Date.now(),
+          phone: sendPhone,
+          message: sendMessage,
+          direction: "outbound",
+          status: "sent",
+          provider: null,
+          leadId: sendLeadId ? parseInt(sendLeadId) : null,
+          createdAt: new Date().toISOString(),
+        };
+        setAllMessages(prev => [...prev, newMsg]);
+        const lead = leads.find(l => l.id === (sendLeadId ? parseInt(sendLeadId) : 0));
+        setConversations(prev => {
+          const existing = prev.find(c => c.phone === sendPhone);
+          if (existing) {
+            return prev.map(c => c.phone === sendPhone ? {
+              ...c,
+              lastMessage: sendMessage,
+              lastDirection: "outbound",
+              lastStatus: "sent",
+              lastAt: new Date().toISOString(),
+              messageCount: c.messageCount + 1,
+            } : c);
+          }
+          return [{
+            phone: sendPhone,
+            lastMessage: sendMessage,
+            lastDirection: "outbound",
+            lastStatus: "sent",
+            lastAt: new Date().toISOString(),
+            messageCount: 1,
+            leadId: sendLeadId ? parseInt(sendLeadId) : null,
+            leadName: lead ? `${lead.firstName ?? ""} ${lead.lastName ?? ""}`.trim() || null : null,
+          }, ...prev];
+        });
         setSendMessage("");
-        setTimeout(() => window.location.reload(), 1500);
+        setTimeout(() => { setShowSendDialog(false); setSendResult(null); }, 1200);
       } else {
         setSendResult({ ok: false, text: data.error || "Failed to send SMS" });
       }
@@ -120,8 +157,27 @@ export function SmsClient({
       const data = await res.json();
       if (res.ok) {
         setSendResult({ ok: true, text: "Sent!" });
+        const newMsg: Message = {
+          id: data.id || Date.now(),
+          phone: selectedPhone!,
+          message: sendMessage,
+          direction: "outbound",
+          status: "sent",
+          provider: null,
+          leadId: selectedConvo?.leadId || null,
+          createdAt: new Date().toISOString(),
+        };
+        setAllMessages(prev => [...prev, newMsg]);
+        setConversations(prev => prev.map(c => c.phone === selectedPhone ? {
+          ...c,
+          lastMessage: sendMessage,
+          lastDirection: "outbound",
+          lastStatus: "sent",
+          lastAt: new Date().toISOString(),
+          messageCount: c.messageCount + 1,
+        } : c));
         setSendMessage("");
-        setTimeout(() => window.location.reload(), 1500);
+        setTimeout(() => setSendResult(null), 2000);
       } else {
         setSendResult({ ok: false, text: data.error || "Failed" });
       }
