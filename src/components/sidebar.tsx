@@ -20,7 +20,7 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/leads/new", label: "Add New Lead", icon: UserPlus },
 ];
