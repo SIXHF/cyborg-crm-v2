@@ -264,36 +264,55 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     try {
       const ctx = new AudioContext();
       ringbackCtxRef.current = ctx;
-      const dest = ctx.createMediaStreamDestination();
 
-      // DIAGNOSTIC: continuous tone, NO gain scheduling
-      // If this plays for >5s, AudioContext works and gain scheduling is broken
-      // If this stops at 2s, AudioContext/MediaStream is dying
+      // Monitor AudioContext state changes
+      ctx.onstatechange = () => log(`AudioContext state changed: ${ctx.state}`);
+
+      // Continuous tone — direct to ctx.destination (simplest possible path)
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
       osc1.frequency.value = 440;
       osc2.frequency.value = 480;
-      gain.gain.value = 0.15; // constant volume, no scheduling
+      gain.gain.value = 0.15;
       osc1.connect(gain);
       osc2.connect(gain);
-      gain.connect(dest);
+      gain.connect(ctx.destination); // direct output, no MediaStream
+
       osc1.start();
       osc2.start();
-      // NO osc.stop(), NO gain scheduling — just continuous tone
 
-      if (audioRef.current) {
-        audioRef.current.srcObject = dest.stream;
-        audioRef.current.play().catch(() => {});
-      }
+      // ALSO try: detached audio element with MediaStream (outside React)
+      const dest = ctx.createMediaStreamDestination();
+      const osc3 = ctx.createOscillator();
+      const osc4 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc3.frequency.value = 440;
+      osc4.frequency.value = 480;
+      gain2.gain.value = 0.15;
+      osc3.connect(gain2);
+      osc4.connect(gain2);
+      gain2.connect(dest);
+      osc3.start();
+      osc4.start();
 
-      // Log state every 2 seconds to monitor
+      const detachedAudio = document.createElement("audio");
+      detachedAudio.id = "ringback-detached";
+      detachedAudio.srcObject = dest.stream;
+      document.body.appendChild(detachedAudio);
+      detachedAudio.play().catch(e => log("Detached audio play failed: " + e.message));
+
+      // Monitor every 2s
       const monitor = setInterval(() => {
-        if (!ringbackPlayingRef.current) { clearInterval(monitor); return; }
-        log(`Ring monitor: ctx=${ctx.state} time=${ctx.currentTime.toFixed(1)}`);
+        if (!ringbackPlayingRef.current) {
+          clearInterval(monitor);
+          return;
+        }
+        const da = document.getElementById("ringback-detached") as HTMLAudioElement;
+        log(`MONITOR: ctx.state=${ctx.state} ctx.time=${ctx.currentTime.toFixed(1)} detached.paused=${da?.paused} detached.time=${da?.currentTime?.toFixed(1)}`);
       }, 2000);
 
-      log("Ringback DIAGNOSTIC: continuous tone via audioRef.srcObject");
+      log("Ringback DIAGNOSTIC: ctx.destination + detached srcObject");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
