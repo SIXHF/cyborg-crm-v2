@@ -241,10 +241,12 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const ringbackElRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    // Prime Chrome's audio subsystem
+    // Prime Chrome's audio subsystem — keep stream alive so Chrome
+    // stays in "communications mode" and doesn't disrupt audio on actual calls.
+    // Windows is set to "Do nothing" so keeping the mic open won't duck audio.
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      stream.getTracks().forEach(t => t.stop()); // release immediately
-      log("Audio system primed (getUserMedia called and released)");
+      // DON'T release — keep Chrome in communications mode permanently
+      log("Audio system primed (mic stream kept alive)");
     }).catch(() => {});
   }, []);
 
@@ -344,7 +346,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
 
       await simpleUser.call(
         target,
-        {}, // InviterOptions
+        {}, // InviterOptions — no earlyMedia (causes false "answered" on 183)
         {
           sessionDescriptionHandlerOptions: {
             constraints: { audio: true, video: false },
