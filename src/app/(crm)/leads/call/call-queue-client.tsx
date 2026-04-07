@@ -126,7 +126,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         const simpleUser = new SimpleUser(server, {
           aor,
           media: {
-            remote: { audio: audioRef.current! },
+            // DON'T pass remote audio element — we handle it manually
+            // in onCallAnswered to prevent SIP.js from killing ringback
           },
           userAgentOptions: {
             authorizationUsername: authUser,
@@ -151,8 +152,29 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             },
             onCallAnswered: () => {
               log("Call answered");
-              setCallState("active");
               stopRingback();
+              setCallState("active");
+              // Manually attach remote media (we don't pass audio element to
+              // SimpleUser to prevent it from killing ringback during setup)
+              try {
+                const client = telnyxClientRef.current;
+                if (client?.session?.sessionDescriptionHandler) {
+                  const sdh = client.session.sessionDescriptionHandler;
+                  const pc = sdh.peerConnection as RTCPeerConnection;
+                  if (pc) {
+                    const receivers = pc.getReceivers();
+                    const audioReceiver = receivers.find((r: any) => r.track?.kind === "audio");
+                    if (audioReceiver?.track && audioRef.current) {
+                      const stream = new MediaStream([audioReceiver.track]);
+                      audioRef.current.srcObject = stream;
+                      audioRef.current.play().catch(() => {});
+                      log("Remote audio attached manually");
+                    }
+                  }
+                }
+              } catch (e: any) {
+                log("Remote audio attach error: " + e.message);
+              }
             },
             onCallReceived: async () => {
               log("Incoming call — auto-answer disabled");
@@ -226,65 +248,26 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone ──
-  // The 183 SIP response triggers WebRTC renegotiation which kills ALL
-  // independent audio (AudioContext, separate <audio> elements, MediaStreams).
-  // The ONLY reliable approach: use a continuous AudioContext with oscillators
-  // that NEVER stop (use gain envelope for on/off pattern instead of start/stop).
-  // This keeps the AudioContext permanently active with no gaps for Chrome to suspend.
-  const ringbackCtxRef = useRef<AudioContext | null>(null);
-  const ringbackGainRef = useRef<GainNode | null>(null);
+  // ── Ringback tone — static WAV on dedicated <audio> element ──
+  // We no longer pass an audio element to SIP.js SimpleUser, so SIP.js
+  // cannot interfere with ANY audio element during call setup.
+  // Remote audio is attached manually only when the call is answered.
+  const ringbackRef = useRef<HTMLAudioElement>(null);
   const ringbackPlayingRef = useRef(false);
 
   function startRingback() {
-    if (ringbackPlayingRef.current) return;
+    const el = ringbackRef.current;
+    if (!el || ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = true;
-
-    try {
-      const ctx = new AudioContext();
-      ringbackCtxRef.current = ctx;
-
-      // TWO oscillators that run FOREVER (never call .stop())
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      osc1.frequency.value = 440;
-      osc2.frequency.value = 480;
-
-      // Gain node controls the 2s on / 4s off pattern
-      const gain = ctx.createGain();
-      gain.gain.value = 0; // start silent
-      ringbackGainRef.current = gain;
-
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(ctx.destination);
-
-      // Start oscillators IMMEDIATELY — they run forever
-      osc1.start();
-      osc2.start();
-
-      // Schedule gain envelope: 2s on at 0.15, 4s off at 0, repeating
-      const baseTime = ctx.currentTime;
-      for (let i = 0; i < 30; i++) {
-        const cycleStart = baseTime + i * 6;
-        gain.gain.setValueAtTime(0.15, cycleStart);       // ON
-        gain.gain.setValueAtTime(0.0001, cycleStart + 2);  // OFF (not zero — keeps audio path active)
-      }
-
-      log("Ringback playing (gain envelope, 30 cycles)");
-    } catch (e: any) {
-      log("Ringback error: " + e.message);
-    }
+    el.currentTime = 0;
+    el.play().then(() => log("Ringback playing")).catch(e => log("Ringback play failed: " + e.message));
   }
 
   function stopRingback() {
     if (!ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = false;
-    if (ringbackCtxRef.current) {
-      ringbackCtxRef.current.close().catch(() => {});
-      ringbackCtxRef.current = null;
-      ringbackGainRef.current = null;
-    }
+    const el = ringbackRef.current;
+    if (el) { el.pause(); el.currentTime = 0; }
     log("Ringback stopped");
   }
 
@@ -593,6 +576,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
+      <audio ref={ringbackRef} src="/ringback.wav" loop preload="auto" style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
