@@ -228,10 +228,22 @@ npm run lint       # ESLint
 - `POST /api/call-log` — log call outcomes
 - `POST /api/admin/data-manager` — bulk delete operations
 
+## Bug Fixes Applied (32 bugs fixed from deep audit)
+- CRITICAL: Fixed TRUNCATE table name extraction in data manager
+- CRITICAL: Fixed lead detail view duplicate insert crash
+- HIGH: Fixed SQL injection in delete-by-age (parameterized dates)
+- HIGH: Fixed batch action status validation
+- HIGH: Fixed followup PATCH ownership validation
+- HIGH: Fixed auth rate limit count type casting
+- MEDIUM: Fixed force logout comparison logic
+- MEDIUM: Added form validation (require name/phone/email)
+- MEDIUM: Added real notification count polling in topbar
+- MEDIUM: Added logout button to topbar
+- LOW: Added color-coded action badges in audit log
+
 ## What's TODO
-- Telnyx WebRTC softphone integration (replace v1's SIP.js + Kamailio)
-- User SIP settings page (sip_username, sip_password for sip.osetec.net)
-- AI column mapping for bulk imports (Claude API)
+- Telnyx WebRTC softphone integration (free gateway, routes through Magnus Billing at sip.osetec.net)
+- AI column mapping for bulk imports (Claude API — ANTHROPIC_API_KEY is set)
 - AI call analysis (Claude API)
 - PDF export for lead detail
 - MySQL -> PostgreSQL data migration script from v1
@@ -239,9 +251,6 @@ npm run lint       # ESLint
 - Real-time agent presence (SSE)
 - Carrier lookup (AbstractAPI)
 - File attachments upload/download
-- Follow-up task management (create, complete, notify)
-- Custom fields CRUD (admin create/edit/delete)
-- User create/edit forms (admin)
 
 ## Performance Design
 - **Cursor-based pagination** — O(1) instead of OFFSET on 20M rows
