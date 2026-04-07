@@ -366,14 +366,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               const code = response?.message?.statusCode;
               log(`Call rejected: SIP ${code}`);
               stopRingback();
-              if (dialedNumberRef.current) {
-                setDialedNumber(null);
-                dialedNumberRef.current = null;
-                setCallState("idle");
-              } else {
-                setCallState("ended");
-                setShowDisposition(true);
-              }
+              // Don't handle disposition here — onCallHangup handles it
             },
           },
         },
@@ -390,14 +383,9 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
           } else if (state === "Terminated") {
             stopRingback();
             activeCallRef.current = null;
-            if (dialedNumberRef.current) {
-              setDialedNumber(null);
-              dialedNumberRef.current = null;
-              setCallState("idle");
-            } else {
-              setCallState("ended");
-              setShowDisposition(true);
-            }
+            // onCallHangup fires before Terminated and already handles disposition.
+            // Only act here if onCallHangup didn't fire (edge case).
+
           }
         });
       }
