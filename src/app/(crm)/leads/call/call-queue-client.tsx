@@ -213,6 +213,20 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         await simpleUser.connect();
         await simpleUser.register();
         telnyxClientRef.current = simpleUser;
+
+        // Pre-acquire microphone immediately after registration.
+        // This triggers Windows "Communications Activity" audio ducking NOW
+        // (when nothing is playing) instead of during call setup (which would
+        // kill the ringback tone). Once ducking is already active, new audio
+        // sources play at reduced volume instead of being abruptly muted.
+        try {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Keep a reference so it's not garbage collected
+          (simpleUser as any).__preAcquiredMic = micStream;
+          log("Mic pre-acquired (Windows audio ducking stabilized)");
+        } catch (e: any) {
+          log("Mic pre-acquire failed: " + e.message);
+        }
       } catch (e: any) {
         log(`Init failed: ${e.message}`);
         setRegistering(false);
@@ -258,63 +272,19 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const ringbackCtxRef = useRef<AudioContext | null>(null);
   const ringbackPlayingRef = useRef(false);
 
-  async function startRingback() {
+  function startRingback() {
     if (ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = true;
     try {
-      // Log available audio output devices
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const outputs = devices.filter(d => d.kind === "audiooutput");
-      log("Audio outputs: " + outputs.map(d => `${d.label || "unnamed"}[${d.deviceId.slice(0,8)}]`).join(", "));
-
-      // Use <audio> element with /ringback.wav + explicit setSinkId
+      // Windows audio ducking is already active (mic pre-acquired at registration).
+      // Simple <audio> at max volume — ducked to ~20% but still audible.
       const audio = document.createElement("audio");
       audio.id = "ringback-audio";
       audio.src = "/ringback.wav";
       audio.loop = true;
       audio.volume = 1.0;
       document.body.appendChild(audio);
-
-      // Force output to default device
-      try {
-        await (audio as any).setSinkId("default");
-        log("setSinkId('default') OK");
-      } catch (e: any) {
-        log("setSinkId failed: " + e.message);
-      }
-
-      await audio.play();
-      log("Ringback playing via detached <audio> vol=1.0 setSinkId=default");
-
-      // ALSO play through AudioContext at MAX volume as backup
-      const ctx = new AudioContext();
-      ringbackCtxRef.current = ctx;
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc1.frequency.value = 440;
-      osc2.frequency.value = 480;
-      gain.gain.value = 0.5; // LOUD
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(ctx.destination);
-      osc1.start();
-      osc2.start();
-
-      // Gain envelope: 2s on / 4s off
-      const base = ctx.currentTime;
-      for (let i = 0; i < 30; i++) {
-        gain.gain.setValueAtTime(0.5, base + i * 6);
-        gain.gain.setValueAtTime(0.001, base + i * 6 + 2);
-      }
-      log("+ AudioContext backup at gain=0.5");
-
-      // Monitor
-      const monitor = setInterval(() => {
-        if (!ringbackPlayingRef.current) { clearInterval(monitor); return; }
-        const a = document.getElementById("ringback-audio") as HTMLAudioElement;
-        if (a) log(`MONITOR: paused=${a.paused} time=${a.currentTime.toFixed(1)} vol=${a.volume}`);
-      }, 3000);
+      audio.play().then(() => log("Ringback playing")).catch(e => log("Ringback failed: " + e.message));
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
@@ -386,6 +356,11 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     log(`Dialing ${target}...`);
     setCallState("connecting");
 
+    // Start ringback NOW — mic was pre-acquired at SIP registration,
+    // so Windows audio ducking is already active. No new getUserMedia
+    // transition will kill this audio.
+    startRingback();
+
     try {
       const simpleUser = telnyxClientRef.current;
 
@@ -431,10 +406,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         },
       );
       activeCallRef.current = simpleUser.session;
-
-      // Start ringback HERE — after await call() returns, getUserMedia is done,
-      // INVITE is sent, Chrome is in "communications mode". Audio won't be killed.
-      startRingback();
 
       // Also attach session state listener as safety net
       if (simpleUser.session) {
