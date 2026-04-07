@@ -247,31 +247,40 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
+  // Chrome kills audio during WebRTC: loop breaks, ended event unreliable.
+  // Use a watchdog timer that forces restart every time the audio stops.
   const ringbackElRef = useRef<HTMLAudioElement | null>(null);
+  const ringbackWatchdogRef = useRef<NodeJS.Timeout | null>(null);
 
   function startRingback() {
     stopRingback();
     try {
       const audio = new Audio("/ringback.mp3");
       audio.volume = 1.0;
-      // Do NOT use loop — Chrome kills looped audio during WebRTC.
-      // Instead, manually restart on 'ended' event.
-      audio.addEventListener("ended", function restart() {
-        if (ringbackElRef.current === audio) {
-          audio.currentTime = 0;
-          audio.play().catch(() => {});
-        }
-      });
       ringbackElRef.current = audio;
       audio.play()
         .then(() => log("Ringback playing"))
         .catch(e => log("Ringback failed: " + e.message));
+
+      // Watchdog: every 500ms, if audio stopped/paused/ended, force restart
+      ringbackWatchdogRef.current = setInterval(() => {
+        const el = ringbackElRef.current;
+        if (!el) return;
+        if (el.paused || el.ended) {
+          el.currentTime = 0;
+          el.play().catch(() => {});
+        }
+      }, 500);
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
   }
 
   function stopRingback() {
+    if (ringbackWatchdogRef.current) {
+      clearInterval(ringbackWatchdogRef.current);
+      ringbackWatchdogRef.current = null;
+    }
     const el = ringbackElRef.current;
     if (el) {
       el.pause();
