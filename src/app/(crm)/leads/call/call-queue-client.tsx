@@ -210,28 +210,43 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   // Ringback tone: US pattern 440Hz + 480Hz, 2s on / 4s off
   useEffect(() => {
     if (callState !== "ringing") return;
-    const audioCtx = new AudioContext();
-    const osc1 = audioCtx.createOscillator();
-    const osc2 = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc1.frequency.value = 440;
-    osc2.frequency.value = 480;
-    osc1.connect(gain);
-    osc2.connect(gain);
-    gain.connect(audioCtx.destination);
-    gain.gain.value = 0.1;
-    osc1.start();
-    osc2.start();
-    // Pattern: 2s on, 4s off (6s cycle)
-    const interval = setInterval(() => {
-      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-      gain.gain.setValueAtTime(0, audioCtx.currentTime + 2);
-    }, 6);
+    let audioCtx: AudioContext | null = null;
+    let osc1: OscillatorNode | null = null;
+    let osc2: OscillatorNode | null = null;
+    let interval: NodeJS.Timeout | null = null;
+
+    try {
+      audioCtx = new AudioContext();
+      osc1 = audioCtx.createOscillator();
+      osc2 = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc1.frequency.value = 440;
+      osc2.frequency.value = 480;
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(audioCtx.destination);
+      gain.gain.value = 0.15;
+      osc1.start();
+      osc2.start();
+
+      // US ringback: 2s on, 4s off (6s cycle)
+      function ringCycle() {
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.setValueAtTime(0, now + 2);
+      }
+      ringCycle(); // Start immediately
+      interval = setInterval(ringCycle, 6000);
+    } catch (e) {
+      console.error("Ringback tone error:", e);
+    }
+
     return () => {
-      clearInterval(interval);
-      osc1.stop();
-      osc2.stop();
-      audioCtx.close();
+      if (interval) clearInterval(interval);
+      try { osc1?.stop(); } catch {}
+      try { osc2?.stop(); } catch {}
+      try { audioCtx?.close(); } catch {}
     };
   }, [callState]);
 
