@@ -218,17 +218,17 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone — called directly from SIP.js delegates ──
-  // Generate WAV blob URL once on mount, play/stop via imperative functions
+  // ── Ringback tone — short 2s WAV replayed on interval ──
+  // Blob URL audio.loop is unreliable in Chrome when WebRTC media streams are active.
+  // Instead: generate a short 2s tone, replay it every 6s via setInterval.
   const ringbackUrlRef = useRef<string | null>(null);
-  const ringbackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ringbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const ringbackActiveRef = useRef(false);
 
   useEffect(() => {
-    // Generate US ringback tone WAV: 440Hz + 480Hz, 2s on / 4s off, loops for 30s
+    // Generate a SHORT 2-second US ringback tone WAV (440Hz + 480Hz)
     const sampleRate = 8000;
-    const cycleLen = sampleRate * 6; // 6s per cycle
-    const toneLen = sampleRate * 2;  // 2s of tone per cycle
-    const totalSamples = cycleLen * 5; // 5 cycles = 30s
+    const totalSamples = sampleRate * 2; // exactly 2 seconds
     const buf = new ArrayBuffer(44 + totalSamples * 2);
     const dv = new DataView(buf);
     const ws = (o: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
@@ -239,58 +239,43 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
     ws(36, "data"); dv.setUint32(40, totalSamples * 2, true);
     for (let i = 0; i < totalSamples; i++) {
-      let s = 0;
-      if ((i % cycleLen) < toneLen) {
-        const t = i / sampleRate;
-        s = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.2 * 32767;
-      }
+      const t = i / sampleRate;
+      const s = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.2 * 32767;
       dv.setInt16(44 + i * 2, s | 0, true);
     }
     ringbackUrlRef.current = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
     return () => { if (ringbackUrlRef.current) URL.revokeObjectURL(ringbackUrlRef.current); };
   }, []);
 
-  // Imperative start/stop — called directly from SIP.js onCallCreated/onCallAnswered/onCallHangup
+  // Play one 2s ring burst
+  function playRingBurst() {
+    if (!ringbackUrlRef.current || !ringbackActiveRef.current) return;
+    // Create a fresh Audio element each burst — avoids stale element issues
+    const a = new Audio(ringbackUrlRef.current);
+    a.volume = 0.6;
+    a.play().catch(() => {});
+  }
+
+  // Start repeating ring: play immediately, then every 6 seconds (2s tone + 4s silence)
   function startRingback() {
-    if (ringbackAudioRef.current || !ringbackUrlRef.current) return;
-    const audio = new Audio(ringbackUrlRef.current);
-    audio.loop = true;
-    audio.volume = 0.6;
-    ringbackAudioRef.current = audio;
-    audio.play().then(() => {
-      log("Ringback playing");
-    }).catch(err => {
-      log("Ringback play() failed: " + err.message + " — trying AudioContext fallback");
-      // AudioContext fallback — works if called within user gesture chain
-      try {
-        const ctx = new AudioContext();
-        ctx.resume();
-        const o1 = ctx.createOscillator(); o1.frequency.value = 440;
-        const o2 = ctx.createOscillator(); o2.frequency.value = 480;
-        const g = ctx.createGain(); g.gain.value = 0.15;
-        o1.connect(g); o2.connect(g); g.connect(ctx.destination);
-        o1.start(); o2.start();
-        log("Ringback fallback (AudioContext) playing");
-        (audio as any)._fbCtx = ctx;
-        (audio as any)._fbOsc = [o1, o2];
-      } catch (e: any) {
-        log("All ringback methods failed: " + e.message);
-      }
-    });
+    if (ringbackActiveRef.current) return; // already ringing
+    ringbackActiveRef.current = true;
+    log("Ringback started");
+    playRingBurst(); // first ring immediately
+    ringbackIntervalRef.current = setInterval(playRingBurst, 6000); // repeat every 6s
   }
 
   function stopRingback() {
-    const audio = ringbackAudioRef.current;
-    if (!audio) return;
-    audio.pause();
-    audio.currentTime = 0;
-    try { (audio as any)._fbOsc?.forEach((o: any) => o.stop()); } catch {}
-    try { (audio as any)._fbCtx?.close(); } catch {}
-    ringbackAudioRef.current = null;
+    if (!ringbackActiveRef.current) return;
+    ringbackActiveRef.current = false;
+    if (ringbackIntervalRef.current) {
+      clearInterval(ringbackIntervalRef.current);
+      ringbackIntervalRef.current = null;
+    }
     log("Ringback stopped");
   }
 
-  // Also stop ringback if callState changes externally (safety net)
+  // Safety net: stop ringback when call becomes active/ended/idle
   useEffect(() => {
     if (callState === "active" || callState === "ended" || callState === "idle") {
       stopRingback();
@@ -331,7 +316,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       // Use requestDelegate.onProgress to detect 180 Ringing vs 183 early media
       await simpleUser.call(
         target,
-        { earlyMedia: true }, // InviterOptions — enables 183 early media handling
+        {}, // InviterOptions
         {
           sessionDescriptionHandlerOptions: {
             constraints: { audio: true, video: false },
@@ -339,18 +324,10 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
           requestDelegate: {
             onProgress: (response: any) => {
               const code = response?.message?.statusCode;
-              log(`SIP ${code} response received`);
-              if (code === 180) {
-                // 180 Ringing — no media, keep playing local ringback
-                setCallState("ringing");
-              } else if (code === 183) {
-                // 183 Session Progress — server is sending early media (ringback)
-                // SIP.js auto-attaches remote audio via earlyMedia: true
-                // Stop local ringback to avoid double audio
-                log("Early media (183) — switching to server ringback");
-                stopRingback();
-                setCallState("ringing");
-              }
+              log(`SIP ${code} provisional response`);
+              // Both 180 and 183: keep local ringback playing
+              // (Server may or may not include early media — don't stop local tone)
+              setCallState("ringing");
             },
             onReject: (response: any) => {
               const code = response?.message?.statusCode;
