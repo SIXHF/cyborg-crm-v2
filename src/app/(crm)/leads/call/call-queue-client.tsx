@@ -245,6 +245,17 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       ringbackCtxRef.current = ctx;
       const dest = ctx.createMediaStreamDestination();
 
+      // CRITICAL: Keep a silent oscillator running FOREVER to prevent
+      // Chrome from auto-suspending the AudioContext during silence gaps.
+      // Without this, Chrome suspends the context when oscillators stop
+      // at the 2s mark, and the next ring at 6s never plays.
+      const keepAlive = ctx.createOscillator();
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0.00001; // essentially silent but keeps ctx alive
+      keepAlive.connect(silentGain);
+      silentGain.connect(dest);
+      keepAlive.start();
+
       // Schedule 20 ring cycles (2min) through the MediaStream
       const baseTime = ctx.currentTime;
       for (let i = 0; i < 20; i++) {
@@ -258,7 +269,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         gain.gain.value = 0.15;
         osc1.connect(gain);
         osc2.connect(gain);
-        gain.connect(dest); // → MediaStream, NOT ctx.destination
+        gain.connect(dest);
         osc1.start(startAt);
         osc1.stop(stopAt);
         osc2.start(startAt);
