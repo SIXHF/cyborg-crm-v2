@@ -3,6 +3,7 @@ import { getUser, audit } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { leads, leadCards, leadCosigners, leadEmployers, leadVehicles, leadRelatives, leadAddresses, leadEmails, leadLicenses, leadComments, leadAttachments, leadFollowups, leadViews, callQueue, callLog, collabEvents } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
+import { calculateLeadScore } from "@/lib/lead-scoring";
 
 // GET /api/leads/[id] — fetch single lead
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -41,15 +42,50 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
   }
 
+  // Handle custom fields (cf_* keys go into JSONB customFields column)
+  const customFieldUpdates: Record<string, string> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (key.startsWith("cf_")) {
+      customFieldUpdates[key.slice(3)] = value as string;
+    }
+  }
+  if (Object.keys(customFieldUpdates).length > 0) {
+    // Merge with existing custom fields
+    const [existing] = await db.select({ customFields: leads.customFields }).from(leads).where(eq(leads.id, leadId));
+    const merged = { ...(existing?.customFields as Record<string, any> || {}), ...customFieldUpdates };
+    updates.customFields = merged;
+  }
+
   if (updates.phone) updates.phone = updates.phone.replace(/\D/g, "");
   if (updates.landline) updates.landline = updates.landline.replace(/\D/g, "");
   if (updates.agentId) updates.agentId = parseInt(updates.agentId);
   if (updates.assignedTo) updates.assignedTo = parseInt(updates.assignedTo);
+  if (updates.ssnLast4) updates.ssnLast4 = updates.ssnLast4.replace(/\D/g, "").slice(-4);
+  if (updates.email) updates.email = updates.email.toLowerCase();
+
+  // Recalculate lead score on every edit (matches v1)
+  const [currentLead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  if (currentLead) {
+    const merged = { ...currentLead, ...updates };
+    updates.leadScore = calculateLeadScore({
+      creditScoreRange: merged.creditScoreRange,
+      annualIncome: merged.annualIncome,
+      employmentStatus: merged.employmentStatus,
+      email: merged.email,
+      phone: merged.phone,
+      address: merged.address,
+      city: merged.city,
+      state: merged.state,
+      zip: merged.zip,
+      dob: merged.dob,
+      ssnLast4: merged.ssnLast4,
+    });
+  }
 
   await db.update(leads).set(updates).where(eq(leads.id, leadId));
-  await audit(user.id, user.username, "edit_lead", "lead", leadId, `Updated: ${Object.keys(updates).join(", ")}`);
+  await audit(user.id, user.username, "edit_lead", "lead", leadId, `Updated: ${Object.keys(updates).filter(k => k !== 'updatedAt' && k !== 'leadScore').join(", ")}`);
 
-  return NextResponse.json({ success: true, id: leadId });
+  return NextResponse.json({ success: true, id: leadId, leadScore: updates.leadScore });
 }
 
 // DELETE /api/leads/[id] — delete lead and all related records
