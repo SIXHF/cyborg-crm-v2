@@ -33,9 +33,22 @@ export default async function LeadsPage({ searchParams }: Props) {
   // Build WHERE conditions
   const conditions: any[] = [];
 
-  // Agent visibility: agents only see their own leads
-  if (user.role === "agent" && user.leadsVisibility === "own") {
-    conditions.push(eq(leads.agentId, user.id));
+  // Lead visibility (matches v1):
+  // - admin: always sees all leads
+  // - processor: sees all leads (unless leadsVisibility is set)
+  // - agent with visibility "own": sees only leads they created (agent_id = user.id)
+  // - agent with visibility "assigned": sees leads assigned to them (assigned_to = user.id) OR created by them
+  // - anyone with visibility "all": sees all leads
+  if (user.role !== "admin") {
+    const vis = user.leadsVisibility || (user.role === "agent" ? "own" : "all");
+    if (vis === "own") {
+      conditions.push(eq(leads.agentId, user.id));
+    } else if (vis === "assigned") {
+      conditions.push(
+        or(eq(leads.agentId, user.id), eq(leads.assignedTo, user.id))!
+      );
+    }
+    // vis === "all" — no filter needed
   }
 
   // Search

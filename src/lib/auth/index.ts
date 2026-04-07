@@ -1,8 +1,8 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { users, sessions, auditLog, loginAttempts } from '@/lib/db/schema';
-import { eq, and, gt, sql } from 'drizzle-orm';
+import { eq, and, gt, sql, desc } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
@@ -19,10 +19,55 @@ export interface SessionUser {
   role: UserRole;
   isActive: boolean;
   leadsVisibility: string | null;
+  allowedIps: string | null;
   sipUsername: string | null;
   sipPassword: string | null;
   sipAuthUser: string | null;
   sipDisplayName: string | null;
+}
+
+// ─── IP Whitelist Check (matches v1 exactly) ────────────
+// Only enforced for agents and processors. Admins bypass.
+// Supports exact IPs and CIDR ranges, comma-separated.
+function checkIpWhitelist(user: { role: string; allowedIps: string | null }, clientIp: string): boolean {
+  if (user.role === 'admin') return true;
+  const raw = (user.allowedIps || '').trim();
+  if (!raw) return true; // No whitelist = allow all
+
+  for (const entry of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+    if (entry.includes('/')) {
+      // CIDR check
+      if (ipInCidr(clientIp, entry)) return true;
+    } else {
+      if (clientIp === entry) return true;
+    }
+  }
+  return false;
+}
+
+function ipInCidr(ip: string, cidr: string): boolean {
+  try {
+    const [subnet, bitsStr] = cidr.split('/');
+    const bits = parseInt(bitsStr);
+    const ipNum = ipToNumber(ip);
+    const subNum = ipToNumber(subnet);
+    if (ipNum === null || subNum === null) return false;
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+    return (ipNum & mask) === (subNum & mask);
+  } catch { return false; }
+}
+
+function ipToNumber(ip: string): number | null {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(isNaN)) return null;
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+async function getClientIp(): Promise<string> {
+  const hdrs = await headers();
+  return hdrs.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || hdrs.get('x-real-ip')
+    || 'unknown';
 }
 
 // ─── Get current session user (server component) ────────
@@ -36,6 +81,7 @@ export async function getUser(): Promise<SessionUser | null> {
       sessionId: sessions.id,
       userId: sessions.userId,
       expiresAt: sessions.expiresAt,
+      sessionCreatedAt: sessions.createdAt,
       id: users.id,
       username: users.username,
       email: users.email,
@@ -43,6 +89,7 @@ export async function getUser(): Promise<SessionUser | null> {
       role: users.role,
       isActive: users.isActive,
       leadsVisibility: users.leadsVisibility,
+      allowedIps: users.allowedIps,
       sipUsername: users.sipUsername,
       sipPassword: users.sipPassword,
       sipAuthUser: users.sipAuthUser,
@@ -65,8 +112,26 @@ export async function getUser(): Promise<SessionUser | null> {
   // Check if user is still active
   if (!row.isActive) return null;
 
-  // Check force logout — if forceLogoutAt is set and session was created before it, invalidate
-  if (row.forceLogoutAt && new Date(row.forceLogoutAt) > new Date(row.expiresAt.getTime() - 24 * 60 * 60 * 1000)) {
+  // Force-logout: admin can remotely kick a user by setting force_logout_at
+  // If force_logout_at is AFTER the session was created, invalidate the session
+  if (row.forceLogoutAt && row.sessionCreatedAt) {
+    const forceTime = new Date(row.forceLogoutAt).getTime();
+    const sessionTime = new Date(row.sessionCreatedAt).getTime();
+    if (forceTime > sessionTime) {
+      // Delete the session and return null
+      await db.delete(sessions).where(eq(sessions.id, sessionId));
+      return null;
+    }
+  }
+
+  // IP whitelist check (only for agents and processors)
+  const clientIp = await getClientIp();
+  if (!checkIpWhitelist({ role: row.role, allowedIps: row.allowedIps }, clientIp)) {
+    // Log the blocked attempt
+    await audit(row.id, row.username, 'ip_blocked', 'user', row.id,
+      `Blocked IP: ${clientIp} — not in whitelist: ${row.allowedIps || ''}`, clientIp);
+    // Delete session
+    await db.delete(sessions).where(eq(sessions.id, sessionId));
     return null;
   }
 
@@ -77,7 +142,8 @@ export async function getUser(): Promise<SessionUser | null> {
     fullName: row.fullName,
     role: row.role,
     isActive: row.isActive,
-    leadsVisibility: row.leadsVisibility,
+    leadsVisibility: row.leadsVisibility || 'all',
+    allowedIps: row.allowedIps,
     sipUsername: row.sipUsername,
     sipPassword: row.sipPassword,
     sipAuthUser: row.sipAuthUser,
@@ -86,6 +152,10 @@ export async function getUser(): Promise<SessionUser | null> {
 }
 
 // ─── Require auth (redirect to login if not authenticated) ──
+// v1 permission model:
+// - admin: full access to everything
+// - processor: can view/edit all leads, some admin pages (data manager, call history)
+// - agent: can only see own leads, no admin pages
 export async function requireAuth(allowedRoles?: UserRole[]): Promise<SessionUser> {
   const user = await getUser();
   if (!user) redirect('/login');
@@ -131,11 +201,19 @@ export async function login(
       username,
       success: false,
     });
+    await audit(null, username, 'login_failed', 'user', undefined, `Failed login from ${ipAddress}`, ipAddress);
     return { success: false, error: 'Invalid username or password.' };
   }
 
   if (!user[0].isActive) {
     return { success: false, error: 'Account is deactivated.' };
+  }
+
+  // IP whitelist check on login
+  if (!checkIpWhitelist({ role: user[0].role, allowedIps: user[0].allowedIps }, ipAddress)) {
+    await audit(user[0].id, user[0].username, 'ip_blocked', 'user', user[0].id,
+      `Login blocked — IP ${ipAddress} not in whitelist: ${user[0].allowedIps || ''}`, ipAddress);
+    return { success: false, error: 'Access denied from this IP address.' };
   }
 
   // Create session
@@ -183,10 +261,28 @@ export async function logout() {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
   if (sessionId) {
+    // Get user before deleting session for audit
+    const user = await getUser();
+    if (user) {
+      await audit(user.id, user.username, 'logout', 'user', user.id);
+    }
     await db.delete(sessions).where(eq(sessions.id, sessionId));
   }
   cookieStore.delete(SESSION_COOKIE);
   redirect('/login');
+}
+
+// ─── Force logout all users ─────────────────────────────
+export async function forceLogoutAll() {
+  await db.update(users).set({ forceLogoutAt: new Date() });
+  // Delete all sessions
+  await db.delete(sessions);
+}
+
+// ─── Force logout single user ───────────────────────────
+export async function forceLogoutUser(userId: number) {
+  await db.update(users).set({ forceLogoutAt: new Date() }).where(eq(users.id, userId));
+  await db.delete(sessions).where(eq(sessions.userId, userId));
 }
 
 // ─── Hash password ──────────────────────────────────────
@@ -204,15 +300,23 @@ export async function audit(
   details?: string,
   ipAddress?: string,
 ) {
-  await db.insert(auditLog).values({
-    userId,
-    username,
-    action,
-    entityType,
-    entityId: entityId ? BigInt(entityId) as any : null,
-    details,
-    ipAddress,
-  });
+  try {
+    if (!ipAddress) {
+      ipAddress = await getClientIp();
+    }
+    await db.insert(auditLog).values({
+      userId,
+      username,
+      action,
+      entityType,
+      entityId: entityId ? BigInt(entityId) as any : null,
+      details,
+      ipAddress,
+    });
+  } catch (e) {
+    // Don't crash if audit logging fails
+    console.error('Audit log error:', e);
+  }
 }
 
 // ─── Generate CSRF token ───────────────────────────────
