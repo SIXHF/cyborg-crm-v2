@@ -261,73 +261,46 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   function startRingback() {
     stopRingback();
     try {
+      // Single clean output: AudioContext → audioRef.srcObject
+      // audioRef is the WebRTC element — Chrome won't mute it
       const ctx = new AudioContext();
       ringbackCtxRef.current = ctx;
       const dest = ctx.createMediaStreamDestination();
 
-      // Ringback oscillators → MediaStreamDestination
+      // TWO oscillators that NEVER stop
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
       osc1.frequency.value = 440;
       osc2.frequency.value = 480;
-      gain.gain.value = 0.0001;
       osc1.connect(gain);
       osc2.connect(gain);
       gain.connect(dest);
+
+      // Gain envelope: 2s on / 4s off (0.01 not 0.0001 for "off" — Chrome
+      // may kill audio path if it thinks the signal is silent)
+      gain.gain.value = 0.25;
       osc1.start();
       osc2.start();
-
-      // Gain envelope: 2s on / 4s off
       const base = ctx.currentTime;
       for (let i = 0; i < 30; i++) {
-        gain.gain.setValueAtTime(0.2, base + i * 6);
-        gain.gain.setValueAtTime(0.0001, base + i * 6 + 2);
+        gain.gain.setValueAtTime(0.25, base + i * 6);
+        gain.gain.setValueAtTime(0.01, base + i * 6 + 2);
       }
 
-      // ALSO set on audioRef as srcObject (WebRTC audio path)
       if (audioRef.current) {
         audioRef.current.srcObject = dest.stream;
         audioRef.current.play().catch(() => {});
       }
-
-      // ALSO try direct ctx.destination (in case Windows ducking is off)
-      const osc3 = ctx.createOscillator();
-      const osc4 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      osc3.frequency.value = 440;
-      osc4.frequency.value = 480;
-      gain2.gain.value = 0.0001;
-      osc3.connect(gain2);
-      osc4.connect(gain2);
-      gain2.connect(ctx.destination);
-      osc3.start();
-      osc4.start();
-      for (let i = 0; i < 30; i++) {
-        gain2.gain.setValueAtTime(0.2, base + i * 6);
-        gain2.gain.setValueAtTime(0.0001, base + i * 6 + 2);
-      }
-
-      // ALSO try a plain audio element with cache-busting
-      const fallback = new Audio("/ringback.mp3?t=" + Date.now());
-      fallback.volume = 1.0;
-      fallback.loop = true;
-      fallback.play().catch(() => {});
-
-      // Store fallback ref for cleanup
-      (ctx as any).__fallbackAudio = fallback;
-      log("Ringback: 3 outputs (audioRef.srcObject + ctx.destination + audio element)");
+      log("Ringback playing via audioRef.srcObject");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
   }
 
   function stopRingback() {
-    const ctx = ringbackCtxRef.current;
-    if (ctx) {
-      // Clean up fallback audio element
-      try { (ctx as any).__fallbackAudio?.pause(); } catch {}
-      ctx.close().catch(() => {});
+    if (ringbackCtxRef.current) {
+      ringbackCtxRef.current.close().catch(() => {});
       ringbackCtxRef.current = null;
     }
     if (audioRef.current) {
