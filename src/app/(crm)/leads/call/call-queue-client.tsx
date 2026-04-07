@@ -275,7 +275,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     // Always clean up first (fixes second call having no ring)
     stopRingback();
     try {
-      const audio = new Audio("/ringback.wav");
+      const audio = new Audio("/ringback.mp3");
       audio.loop = true;
       audio.volume = 1.0;
       ringbackElRef.current = audio;
