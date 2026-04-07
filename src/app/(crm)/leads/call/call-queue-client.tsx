@@ -247,31 +247,55 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
-  // MUST start ringback in onProgress (180/183), NOT before simpleUser.call().
-  // Reason: simpleUser.call() triggers getUserMedia({ audio: true }) internally,
-  // which puts Chrome into "communications mode" and interrupts ALL existing
-  // audio. By the time onProgress fires, getUserMedia has completed and Chrome
-  // is already in communications mode — new audio plays without interruption.
-  const ringbackRef = useRef<HTMLAudioElement>(null);
+  // Must use AudioContext (not <audio> element) because after getUserMedia,
+  // Chrome routes <audio> elements to the "default" device but WebRTC goes
+  // to the "communications" device. AudioContext created AFTER getUserMedia
+  // automatically uses the communications device — same output as the call.
+  //
+  // Oscillators run continuously, gain envelope creates 2s on / 4s off pattern.
+  // Created after await simpleUser.call() (getUserMedia done, comms mode active).
+  const ringbackCtxRef = useRef<AudioContext | null>(null);
   const ringbackPlayingRef = useRef(false);
 
   function startRingback() {
-    const el = ringbackRef.current;
-    if (!el) return;
-    // Allow re-calling (e.g. 180 then 183) — restart if already "playing" but silent
-    if (!ringbackPlayingRef.current) {
-      ringbackPlayingRef.current = true;
-      el.currentTime = 0;
+    if (ringbackPlayingRef.current) return;
+    ringbackPlayingRef.current = true;
+    try {
+      const ctx = new AudioContext();
+      ringbackCtxRef.current = ctx;
+
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc1.frequency.value = 440;
+      osc2.frequency.value = 480;
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.value = 0.0001; // start near-silent
+
+      osc1.start();
+      osc2.start();
+
+      // Gain envelope: 2s on / 4s off, 30 cycles (3 minutes)
+      const base = ctx.currentTime;
+      for (let i = 0; i < 30; i++) {
+        gain.gain.setValueAtTime(0.15, base + i * 6);       // ON
+        gain.gain.setValueAtTime(0.0001, base + i * 6 + 2); // OFF (keep alive)
+      }
+      log("Ringback playing");
+    } catch (e: any) {
+      log("Ringback error: " + e.message);
     }
-    // Always try to play — in case previous play was interrupted
-    el.play().then(() => log("Ringback playing")).catch(e => log("Ringback play failed: " + e.message));
   }
 
   function stopRingback() {
     if (!ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = false;
-    const el = ringbackRef.current;
-    if (el) { el.pause(); el.currentTime = 0; }
+    if (ringbackCtxRef.current) {
+      ringbackCtxRef.current.close().catch(() => {});
+      ringbackCtxRef.current = null;
+    }
     log("Ringback stopped");
   }
 
@@ -595,7 +619,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
-      <audio ref={ringbackRef} src="/ringback.wav" loop preload="auto" style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
