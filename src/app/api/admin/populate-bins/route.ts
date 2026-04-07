@@ -4,119 +4,128 @@ import { db } from "@/lib/db";
 import { binCache } from "@/lib/db/schema";
 import { sql } from "drizzle-orm";
 
-// Common BIN ranges — comprehensive local database
-// This eliminates the need for external API calls
-const BIN_DATABASE: [string, string, string, string][] = [
-  // [bin_prefix, brand, type, issuer]
-  // Visa
-  ["400000", "Visa", "debit", "JPMORGAN CHASE BANK N.A."],
-  ["400005", "Visa", "credit", "JPMORGAN CHASE BANK N.A."],
-  ["400010", "Visa", "debit", "JPMORGAN CHASE BANK N.A."],
-  ["400837", "Visa", "debit", "JPMORGAN CHASE BANK N.A."],
-  ["401178", "Visa", "credit", "JPMORGAN CHASE BANK N.A."],
-  ["401179", "Visa", "debit", "JPMORGAN CHASE BANK N.A."],
-  ["402360", "Visa", "credit", "WELLS FARGO BANK N.A."],
-  ["402361", "Visa", "debit", "WELLS FARGO BANK N.A."],
-  ["403428", "Visa", "credit", "NAVY FEDERAL CREDIT UNION"],
-  ["405851", "Visa", "credit", "PNC BANK N.A."],
-  ["406039", "Visa", "debit", "WELLS FARGO BANK N.A."],
-  ["407076", "Visa", "credit", "SYNCHRONY BANK"],
-  ["411111", "Visa", "credit", "JPMORGAN CHASE BANK N.A."],
-  ["414720", "Visa", "credit", "USAA SAVINGS BANK"],
-  ["414735", "Visa", "credit", "USAA SAVINGS BANK"],
-  ["415004", "Visa", "debit", "BANK OF AMERICA N.A."],
-  ["417500", "Visa", "debit", "JPMORGAN CHASE BANK N.A."],
-  ["421371", "Visa", "credit", "CITIBANK N.A."],
-  ["424631", "Visa", "credit", "CAPITAL ONE BANK (USA) N.A."],
-  ["426596", "Visa", "debit", "CAPITAL ONE BANK (USA) N.A."],
-  ["427533", "Visa", "credit", "CAPITAL ONE BANK (USA) N.A."],
-  ["428800", "Visa", "debit", "WELLS FARGO BANK N.A."],
-  ["431940", "Visa", "credit", "TD BANK N.A."],
-  ["434343", "Visa", "credit", "REGIONS BANK"],
-  ["438857", "Visa", "credit", "FIRST PREMIER BANK"],
-  ["440066", "Visa", "credit", "JPMORGAN CHASE BANK N.A."],
-  ["445509", "Visa", "debit", "JPMORGAN CHASE BANK N.A."],
-  ["448553", "Visa", "credit", "COMENITY BANK"],
-  ["450468", "Visa", "debit", "BANK OF AMERICA N.A."],
-  ["453226", "Visa", "credit", "US BANK N.A."],
-  ["460801", "Visa", "credit", "US BANK N.A."],
-  ["471610", "Visa", "debit", "CAPITAL ONE BANK (USA) N.A."],
-  ["474913", "Visa", "debit", "DISCOVER BANK"],
-  ["476006", "Visa", "debit", "FIFTH THIRD BANK"],
-  ["479524", "Visa", "credit", "MERRICK BANK CORPORATION"],
-  ["480081", "Visa", "debit", "HUNTINGTON NATIONAL BANK"],
-  ["480720", "Visa", "debit", "CITIZENS FINANCIAL GROUP"],
-  ["486327", "Visa", "credit", "BARCLAYS BANK DELAWARE"],
-  ["489070", "Visa", "debit", "ALLY BANK"],
-  ["491783", "Visa", "credit", "GREEN DOT BANK"],
-  // Mastercard
-  ["510000", "Mastercard", "credit", "CITIBANK N.A."],
-  ["512345", "Mastercard", "credit", "SYNCHRONY BANK"],
-  ["515731", "Mastercard", "credit", "BARCLAYS BANK DELAWARE"],
-  ["516732", "Mastercard", "credit", "CITIBANK N.A."],
-  ["518791", "Mastercard", "debit", "JPMORGAN CHASE BANK N.A."],
-  ["520082", "Mastercard", "credit", "JPMORGAN CHASE BANK N.A."],
-  ["521402", "Mastercard", "credit", "CAPITAL ONE BANK (USA) N.A."],
-  ["522228", "Mastercard", "debit", "NETSPEND CORPORATION"],
-  ["524175", "Mastercard", "credit", "WELLS FARGO BANK N.A."],
-  ["525823", "Mastercard", "credit", "BANK OF AMERICA N.A."],
-  ["527111", "Mastercard", "credit", "BANK OF AMERICA N.A."],
-  ["530769", "Mastercard", "debit", "CHIME FINANCIAL INC"],
-  ["531993", "Mastercard", "credit", "US BANK N.A."],
-  ["539181", "Mastercard", "debit", "CAPITAL ONE BANK (USA) N.A."],
-  ["540508", "Mastercard", "credit", "CITI BANK N.A."],
-  ["542418", "Mastercard", "credit", "CREDIT ONE BANK N.A."],
-  ["544764", "Mastercard", "credit", "CAPITAL ONE BANK (USA) N.A."],
-  ["546616", "Mastercard", "credit", "CAPITAL ONE BANK (USA) N.A."],
-  ["548832", "Mastercard", "credit", "DISCOVER BANK"],
-  // Amex
-  ["340000", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["341234", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["342100", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["343456", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["370000", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["371449", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["374245", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["376411", "Amex", "credit", "AMERICAN EXPRESS"],
-  ["378734", "Amex", "credit", "AMERICAN EXPRESS"],
-  // Discover
-  ["601100", "Discover", "credit", "DISCOVER BANK"],
-  ["601120", "Discover", "credit", "DISCOVER BANK"],
-  ["644000", "Discover", "credit", "DISCOVER BANK"],
-  ["650000", "Discover", "credit", "DISCOVER BANK"],
-  ["650001", "Discover", "debit", "DISCOVER BANK"],
-  ["651652", "Discover", "credit", "DISCOVER BANK"],
-];
-
-// POST — populate bin_cache with local BIN database
+// POST — download and import 374K+ BIN records from GitHub
 export async function POST(req: NextRequest) {
   const user = await getUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
-  let inserted = 0;
-  let skipped = 0;
+  try {
+    // Download the BIN database CSV from GitHub (374K+ records)
+    const csvUrl = "https://raw.githubusercontent.com/venelinkochev/bin-list-data/master/bin-list-data.csv";
+    const res = await fetch(csvUrl);
+    if (!res.ok) {
+      return NextResponse.json({ error: "Failed to download BIN database" }, { status: 502 });
+    }
 
-  for (const [bin6, brand, type, issuer] of BIN_DATABASE) {
-    try {
-      await db.insert(binCache).values({
-        bin6,
-        brand,
-        type,
-        issuer,
-        country: "US",
-        source: "local",
-      }).onConflictDoNothing();
-      inserted++;
-    } catch {
-      skipped++;
+    const csvText = await res.text();
+    const lines = csvText.split("\n");
+    const header = lines[0]; // BIN,Brand,Type,Category,Issuer,IssuerPhone,IssuerUrl,isoCode2,isoCode3,CountryName
+
+    let inserted = 0;
+    let skipped = 0;
+    let errors = 0;
+    const batchSize = 500;
+    let batch: { bin6: string; brand: string; type: string; issuer: string; country: string; source: string }[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      // Parse CSV line (handle quoted fields)
+      const cols = parseCSVLine(line);
+      if (cols.length < 10) continue;
+
+      const bin6 = cols[0]?.replace(/"/g, "").trim();
+      if (!bin6 || bin6.length < 4) continue;
+
+      const brand = cols[1]?.replace(/"/g, "").trim() || null;
+      const type = cols[2]?.replace(/"/g, "").trim() || null;
+      const issuer = cols[4]?.replace(/"/g, "").trim() || null;
+      const country = cols[9]?.replace(/"/g, "").trim() || null;
+
+      batch.push({
+        bin6: bin6.slice(0, 8),
+        brand: brand || "",
+        type: (type || "").toLowerCase(),
+        issuer: issuer || "",
+        country: country || "",
+        source: "github-venelinkochev",
+      });
+
+      if (batch.length >= batchSize) {
+        const result = await flushBatch(batch);
+        inserted += result.inserted;
+        skipped += result.skipped;
+        errors += result.errors;
+        batch = [];
+      }
+    }
+
+    // Flush remaining
+    if (batch.length > 0) {
+      const result = await flushBatch(batch);
+      inserted += result.inserted;
+      skipped += result.skipped;
+      errors += result.errors;
+    }
+
+    await audit(user.id, user.username, "populate_bins", "admin", undefined,
+      `Imported ${inserted} BINs from GitHub (${skipped} skipped, ${errors} errors)`);
+
+    return NextResponse.json({
+      success: true,
+      inserted,
+      skipped,
+      errors,
+      total: lines.length - 1,
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
+}
+
+async function flushBatch(batch: any[]): Promise<{ inserted: number; skipped: number; errors: number }> {
+  let inserted = 0, skipped = 0, errors = 0;
+
+  try {
+    await db.insert(binCache).values(batch).onConflictDoNothing();
+    inserted += batch.length;
+  } catch {
+    // Fallback: insert one by one
+    for (const row of batch) {
+      try {
+        await db.insert(binCache).values(row).onConflictDoNothing();
+        inserted++;
+      } catch {
+        skipped++;
+      }
     }
   }
 
-  await audit(user.id, user.username, "populate_bins", "admin", undefined, `Populated BIN cache: ${inserted} inserted, ${skipped} skipped`);
+  return { inserted, skipped, errors };
+}
 
-  return NextResponse.json({ success: true, inserted, skipped, total: BIN_DATABASE.length });
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
 }
 
 // GET — get BIN cache stats
@@ -127,5 +136,7 @@ export async function GET(req: NextRequest) {
   }
 
   const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(binCache);
-  return NextResponse.json({ totalBins: count });
+  const [{ brands }] = await db.select({ brands: sql<number>`count(DISTINCT brand)::int` }).from(binCache);
+
+  return NextResponse.json({ totalBins: count, distinctBrands: brands });
 }
