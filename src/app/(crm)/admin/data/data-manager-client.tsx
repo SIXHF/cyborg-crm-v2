@@ -2,20 +2,24 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, AlertTriangle, Database, Loader2 } from "lucide-react";
+import { Trash2, AlertTriangle, Database, Loader2, Phone, Hash, RotateCcw, FileText } from "lucide-react";
 
 interface Props {
   total: number;
   statusMap: Record<string, number>;
   batches: { ref: string; count: number }[];
   duplicates: number;
+  agents?: { id: number; fullName: string; username: string }[];
 }
 
-export function DataManagerClient({ total, statusMap, batches, duplicates }: Props) {
+export function DataManagerClient({ total, statusMap, batches, duplicates, agents = [] }: Props) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ label: "", deleted: 0, remaining: 0, pct: 0 });
   const [confirmText, setConfirmText] = useState("");
+  const [ageDays, setAgeDays] = useState("90");
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [refNumbers, setRefNumbers] = useState("");
 
   async function runBatchDelete(action: string, params: Record<string, string> = {}, desc: string) {
     if (running) return;
@@ -62,6 +66,33 @@ export function DataManagerClient({ total, statusMap, batches, duplicates }: Pro
     }
   }
 
+  async function runOneShot(action: string, params: Record<string, string> = {}, desc: string) {
+    if (running) return;
+    if (!confirm(`Are you sure?\n\n${desc}\n\nClick OK to proceed.`)) return;
+
+    setRunning(true);
+    setProgress({ label: "Running...", deleted: 0, remaining: 0, pct: 50 });
+
+    try {
+      const res = await fetch("/api/admin/data-manager", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...params }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setProgress({ label: `Error: ${data.error}`, deleted: 0, remaining: 0, pct: 0 });
+      } else {
+        setProgress({ label: "Complete!", deleted: data.deleted || 0, remaining: 0, pct: 100 });
+        setTimeout(() => router.refresh(), 1500);
+      }
+    } catch (e: any) {
+      setProgress((p) => ({ ...p, label: `Error: ${e.message}` }));
+    } finally {
+      setRunning(false);
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* Progress bar */}
@@ -71,7 +102,7 @@ export function DataManagerClient({ total, statusMap, batches, duplicates }: Pro
             {running && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
             <span className="text-sm font-medium">{progress.label}</span>
             <span className="ml-auto text-sm text-muted-foreground">
-              {progress.deleted.toLocaleString()} deleted
+              {progress.deleted.toLocaleString()} affected
               {progress.remaining > 0 && `, ${progress.remaining.toLocaleString()} remaining`}
             </span>
           </div>
@@ -205,6 +236,162 @@ export function DataManagerClient({ total, statusMap, batches, duplicates }: Pro
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Delete by Age */}
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold mb-2 flex items-center gap-2">
+            <Database className="w-4 h-4" /> Delete by Age
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">Delete leads older than N days.</p>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min="1"
+              value={ageDays}
+              onChange={(e) => setAgeDays(e.target.value)}
+              placeholder="Days"
+              className="w-24 h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+            />
+            <button
+              onClick={() => {
+                const d = parseInt(ageDays);
+                if (!d || d < 1) { alert("Enter a valid number of days"); return; }
+                runBatchDelete("delete_by_age", { days: String(d) }, `delete leads older than ${d} days`);
+              }}
+              disabled={running}
+              className="h-9 px-4 bg-red-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-red-600 transition-colors"
+            >
+              Delete Old Leads
+            </button>
+          </div>
+        </div>
+
+        {/* Delete by Agent */}
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold mb-2 flex items-center gap-2">
+            <Trash2 className="w-4 h-4" /> Delete by Agent
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">Delete all leads belonging to a specific agent.</p>
+          <div className="flex gap-2">
+            <select
+              value={selectedAgent}
+              onChange={(e) => setSelectedAgent(e.target.value)}
+              className="flex-1 h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+            >
+              <option value="">Select agent...</option>
+              {agents.map((a) => (
+                <option key={a.id} value={String(a.id)}>
+                  {a.fullName} ({a.username})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => {
+                if (!selectedAgent) { alert("Select an agent"); return; }
+                const agent = agents.find(a => String(a.id) === selectedAgent);
+                runBatchDelete("delete_by_agent", { agentId: selectedAgent }, `delete all leads for agent: ${agent?.fullName || selectedAgent}`);
+              }}
+              disabled={running || !selectedAgent}
+              className="h-9 px-4 bg-red-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-red-600 transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+
+        {/* Delete by Ref Numbers */}
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold mb-2 flex items-center gap-2">
+            <Hash className="w-4 h-4" /> Delete by Ref Numbers
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">Delete leads by ref number (comma or newline separated).</p>
+          <textarea
+            value={refNumbers}
+            onChange={(e) => setRefNumbers(e.target.value)}
+            placeholder="REF001, REF002, REF003..."
+            rows={3}
+            className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-sm mb-2 resize-none"
+          />
+          <button
+            onClick={() => {
+              if (!refNumbers.trim()) { alert("Enter ref numbers"); return; }
+              const count = refNumbers.split(/[,\n\r]+/).filter(r => r.trim()).length;
+              runBatchDelete("delete_by_ref_numbers", { refNumbers }, `delete ${count} leads by ref numbers`);
+            }}
+            disabled={running || !refNumbers.trim()}
+            className="h-9 px-4 bg-red-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-red-600 transition-colors"
+          >
+            Delete by Ref
+          </button>
+        </div>
+
+        {/* Remove Bad Phones */}
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold mb-2 flex items-center gap-2">
+            <Phone className="w-4 h-4" /> Remove Bad Phones
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">
+            <strong>Delete</strong> leads where phone has fewer than 10 or more than 15 digits.
+          </p>
+          <button
+            onClick={() => runBatchDelete("remove_bad_phones", {}, "delete leads with bad phone numbers (<10 or >15 digits)")}
+            disabled={running}
+            className="h-9 px-4 bg-red-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-red-600 transition-colors"
+          >
+            Remove Bad Phones
+          </button>
+        </div>
+
+        {/* Clear Bad Phones */}
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold mb-2 flex items-center gap-2">
+            <Phone className="w-4 h-4" /> Clear Bad Phones
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">
+            Set phone to NULL on leads with bad phone numbers. Does not delete leads.
+          </p>
+          <button
+            onClick={() => runOneShot("clear_bad_phones", {}, "clear bad phone numbers (set to NULL)")}
+            disabled={running}
+            className="h-9 px-4 bg-yellow-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-yellow-600 transition-colors"
+          >
+            Clear Bad Phones
+          </button>
+        </div>
+
+        {/* Reset Lead Scores */}
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold mb-2 flex items-center gap-2">
+            <RotateCcw className="w-4 h-4" /> Reset Lead Scores
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">
+            Set lead_score to 0 for all leads.
+          </p>
+          <button
+            onClick={() => runOneShot("reset_scores", {}, "reset all lead scores to 0")}
+            disabled={running}
+            className="h-9 px-4 bg-yellow-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-yellow-600 transition-colors"
+          >
+            Reset All Scores
+          </button>
+        </div>
+
+        {/* Purge Audit Log */}
+        <div className="bg-card border border-red-500/30 rounded-xl p-5">
+          <h3 className="text-red-500 font-semibold mb-2 flex items-center gap-2">
+            <FileText className="w-4 h-4" /> Purge Audit Log
+          </h3>
+          <p className="text-sm text-muted-foreground mb-3">
+            Truncate the entire audit log table.
+          </p>
+          <button
+            onClick={() => runOneShot("purge_audit", {}, "TRUNCATE the entire audit log table")}
+            disabled={running}
+            className="h-9 px-4 bg-red-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-red-600 transition-colors"
+          >
+            Purge Audit Log
+          </button>
         </div>
       </div>
     </div>

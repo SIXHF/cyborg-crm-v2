@@ -83,12 +83,13 @@ export function LeadFormClient({ agents, customFields, currentUser, initialData 
     }
   }
 
-  function Field({ label, name, type = "text", placeholder }: { label: string; name: string; type?: string; placeholder?: string }) {
+  function renderField(label: string, name: string, type = "text", placeholder?: string) {
     return (
-      <div>
+      <div key={name}>
         <label className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
         <input
           type={type}
+          name={name}
           value={(form as any)[name] || ""}
           onChange={(e) => update(name, e.target.value)}
           placeholder={placeholder}
@@ -113,15 +114,15 @@ export function LeadFormClient({ agents, customFields, currentUser, initialData 
       <div className="bg-card border border-border rounded-xl p-5">
         <h3 className="font-semibold mb-4">Personal Information</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="First Name" name="firstName" />
-          <Field label="Last Name" name="lastName" />
-          <Field label="Email" name="email" type="email" />
-          <Field label="Phone" name="phone" placeholder="10-digit phone" />
-          <Field label="Landline" name="landline" />
-          <Field label="Date of Birth" name="dob" type="date" />
-          <Field label="SSN Last 4" name="ssnLast4" placeholder="1234" />
-          <Field label="Mother's Maiden Name" name="mmn" />
-          <Field label="County" name="county" />
+          {renderField("First Name", "firstName")}
+          {renderField("Last Name", "lastName")}
+          {renderField("Email", "email", "email")}
+          {renderField("Phone", "phone", "text", "10-digit phone")}
+          {renderField("Landline", "landline")}
+          {renderField("Date of Birth", "dob", "date")}
+          {renderField("SSN Last 4", "ssnLast4", "text", "1234")}
+          {renderField("Mother's Maiden Name", "mmn")}
+          {renderField("County", "county")}
         </div>
       </div>
 
@@ -129,11 +130,11 @@ export function LeadFormClient({ agents, customFields, currentUser, initialData 
       <div className="bg-card border border-border rounded-xl p-5">
         <h3 className="font-semibold mb-4">Address</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="md:col-span-2"><Field label="Address" name="address" /></div>
-          <Field label="City" name="city" />
-          <Field label="State" name="state" />
-          <Field label="ZIP" name="zip" />
-          <Field label="Country" name="country" />
+          <div className="md:col-span-2">{renderField("Address", "address")}</div>
+          {renderField("City", "city")}
+          {renderField("State", "state")}
+          {renderField("ZIP", "zip")}
+          {renderField("Country", "country")}
         </div>
       </div>
 
@@ -141,14 +142,14 @@ export function LeadFormClient({ agents, customFields, currentUser, initialData 
       <div className="bg-card border border-border rounded-xl p-5">
         <h3 className="font-semibold mb-4">Financial</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Annual Income" name="annualIncome" type="number" />
-          <Field label="Employment Status" name="employmentStatus" />
-          <Field label="Credit Score Range" name="creditScoreRange" />
-          <Field label="Requested Limit" name="requestedLimit" type="number" />
-          <Field label="Card Type" name="cardType" />
-          <Field label="Card BIN" name="cardNumberBin" />
-          <Field label="Card Brand" name="cardBrand" />
-          <Field label="Card Issuer" name="cardIssuer" />
+          {renderField("Annual Income", "annualIncome", "number")}
+          {renderField("Employment Status", "employmentStatus")}
+          {renderField("Credit Score Range", "creditScoreRange")}
+          {renderField("Requested Limit", "requestedLimit", "number")}
+          {renderField("Card Type", "cardType")}
+          {renderField("Card BIN", "cardNumberBin")}
+          {renderField("Card Brand", "cardBrand")}
+          {renderField("Card Issuer", "cardIssuer")}
         </div>
       </div>
 
@@ -156,11 +157,11 @@ export function LeadFormClient({ agents, customFields, currentUser, initialData 
       <div className="bg-card border border-border rounded-xl p-5">
         <h3 className="font-semibold mb-4">Business</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Business Name" name="businessName" />
-          <Field label="EIN" name="businessEin" />
-          <Field label="Mortgage Bank" name="mortgageBank" />
-          <Field label="Mortgage Payment" name="mortgagePayment" type="number" />
-          <Field label="V-Pass" name="vpass" />
+          {renderField("Business Name", "businessName")}
+          {renderField("EIN", "businessEin")}
+          {renderField("Mortgage Bank", "mortgageBank")}
+          {renderField("Mortgage Payment", "mortgagePayment", "number")}
+          {renderField("V-Pass", "vpass")}
         </div>
       </div>
 

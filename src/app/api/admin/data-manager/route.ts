@@ -113,6 +113,74 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ done: rem === 0, deleted, remaining: rem });
       }
 
+      case "delete_by_age": {
+        const days = parseInt(body.days);
+        if (!days || days < 1) return NextResponse.json({ error: "Invalid days value" }, { status: 400 });
+        const result = await batchDeleteWhere(
+          sql`${leads.createdAt} < NOW() - INTERVAL '${sql.raw(String(days))} days'`
+        );
+        if (result.deleted && result.remaining === 0) {
+          await audit(user.id, user.username, "data_manager", "admin", undefined, `Deleted leads older than ${days} days`);
+        }
+        return NextResponse.json({ done: result.remaining === 0, ...result });
+      }
+
+      case "delete_by_agent": {
+        const agentId = parseInt(body.agentId);
+        if (!agentId) return NextResponse.json({ error: "Invalid agent ID" }, { status: 400 });
+        const result = await batchDeleteWhere(eq(leads.agentId, agentId));
+        if (result.deleted && result.remaining === 0) {
+          await audit(user.id, user.username, "data_manager", "admin", undefined, `Deleted leads for agent_id: ${agentId}`);
+        }
+        return NextResponse.json({ done: result.remaining === 0, ...result });
+      }
+
+      case "delete_by_ref_numbers": {
+        const refs = (body.refNumbers as string || "")
+          .split(/[,\n\r]+/)
+          .map((r: string) => r.trim())
+          .filter((r: string) => r.length > 0);
+        if (!refs.length) return NextResponse.json({ error: "No ref numbers provided" }, { status: 400 });
+        const result = await batchDeleteWhere(inArray(leads.refNumber, refs));
+        if (result.deleted && result.remaining === 0) {
+          await audit(user.id, user.username, "data_manager", "admin", undefined, `Deleted ${result.deleted} leads by ref numbers`);
+        }
+        return NextResponse.json({ done: result.remaining === 0, ...result });
+      }
+
+      case "remove_bad_phones": {
+        const result = await batchDeleteWhere(
+          sql`${leads.phone} IS NOT NULL AND ${leads.phone} != '' AND (LENGTH(${leads.phone}) < 10 OR LENGTH(${leads.phone}) > 15)`
+        );
+        if (result.deleted && result.remaining === 0) {
+          await audit(user.id, user.username, "data_manager", "admin", undefined, `Removed leads with bad phone numbers`);
+        }
+        return NextResponse.json({ done: result.remaining === 0, ...result });
+      }
+
+      case "clear_bad_phones": {
+        const updated = await db.execute(
+          sql`UPDATE leads SET phone = NULL WHERE phone IS NOT NULL AND phone != '' AND (LENGTH(phone) < 10 OR LENGTH(phone) > 15)`
+        );
+        const count = (updated as any)?.rowCount || (updated as any)?.length || 0;
+        await audit(user.id, user.username, "data_manager", "admin", undefined, `Cleared ${count} bad phone numbers`);
+        return NextResponse.json({ done: true, deleted: count, remaining: 0 });
+      }
+
+      case "reset_scores": {
+        const updated = await db.execute(
+          sql`UPDATE leads SET lead_score = 0 WHERE lead_score IS NOT NULL AND lead_score != 0`
+        );
+        const count = (updated as any)?.rowCount || (updated as any)?.length || 0;
+        await audit(user.id, user.username, "data_manager", "admin", undefined, `Reset ${count} lead scores to 0`);
+        return NextResponse.json({ done: true, deleted: count, remaining: 0 });
+      }
+
+      case "purge_audit": {
+        await db.execute(sql`TRUNCATE TABLE audit_log`);
+        return NextResponse.json({ done: true, deleted: 0, remaining: 0 });
+      }
+
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

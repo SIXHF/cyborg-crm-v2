@@ -1,6 +1,6 @@
 import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { leads, importJobs } from "@/lib/db/schema";
+import { leads, importJobs, users } from "@/lib/db/schema";
 import { sql, eq } from "drizzle-orm";
 import { Topbar } from "@/components/topbar";
 import { DataManagerClient } from "./data-manager-client";
@@ -39,6 +39,12 @@ export default async function DataManagerPage() {
     ) t
   `);
 
+  // Agents list for delete-by-agent
+  const agentsList = await db
+    .select({ id: users.id, fullName: users.fullName, username: users.username })
+    .from(users)
+    .orderBy(users.fullName);
+
   return (
     <>
       <Topbar title="Data Manager" user={user} />
@@ -47,6 +53,7 @@ export default async function DataManagerPage() {
         statusMap={statusMap}
         batches={batches.map((b) => ({ ref: b.importRef!, count: b.count }))}
         duplicates={(dupResult as any)?.cnt || 0}
+        agents={agentsList}
       />
     </>
   );

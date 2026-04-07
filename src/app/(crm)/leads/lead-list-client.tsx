@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Search, Filter, ChevronLeft, ChevronRight, Plus, Download, Trash2, MoreHorizontal } from "lucide-react";
+import { Search, Filter, ChevronLeft, ChevronRight, Plus, Download, Trash2, MoreHorizontal, Phone } from "lucide-react";
 import { cn, formatPhone, timeAgo } from "@/lib/utils";
 
 interface Lead {
@@ -97,6 +97,16 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{total.toLocaleString()} leads</span>
+          <button
+            onClick={() => {
+              const params = new URLSearchParams(filters as Record<string, string>);
+              window.open(`/api/leads/export?${params.toString()}`, "_blank");
+            }}
+            className="h-9 px-3 border border-border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-muted transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export
+          </button>
           <Link
             href="/leads/new"
             className="h-9 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-primary/90 transition-colors"
@@ -268,13 +278,72 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
       {selected.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-card border border-border rounded-xl shadow-2xl px-6 py-3 flex items-center gap-4 z-50">
           <span className="text-sm font-medium">{selected.size} selected</span>
-          <button className="h-8 px-3 text-sm bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 flex items-center gap-1.5">
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete
+          {/* Status update */}
+          <select
+            onChange={async (e) => {
+              if (!e.target.value) return;
+              if (!confirm(`Update ${selected.size} leads to "${e.target.value.replace("_"," ")}"?`)) { e.target.value = ""; return; }
+              await fetch("/api/leads/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ids: Array.from(selected), action: "update_status", value: e.target.value }),
+              });
+              setSelected(new Set());
+              router.refresh();
+            }}
+            className="h-8 px-2 text-xs bg-muted border border-border rounded-lg"
+            defaultValue=""
+          >
+            <option value="">Change Status…</option>
+            {["new", "in_review", "approved", "declined", "forwarded", "on_hold"].map((s) => (
+              <option key={s} value={s}>{s.replace("_", " ")}</option>
+            ))}
+          </select>
+          {/* Add to queue */}
+          <button
+            onClick={async () => {
+              for (const id of selected) {
+                await fetch("/api/call-queue", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ leadId: id }),
+                }).catch(() => {});
+              }
+              alert(`${selected.size} leads added to call queue`);
+              setSelected(new Set());
+            }}
+            className="h-8 px-3 text-sm bg-muted rounded-lg hover:bg-muted/80 flex items-center gap-1.5"
+          >
+            <Phone className="w-3.5 h-3.5" />
+            Add to Queue
           </button>
-          <button className="h-8 px-3 text-sm bg-muted rounded-lg hover:bg-muted/80 flex items-center gap-1.5">
+          {/* Export */}
+          <button
+            onClick={() => {
+              const params = new URLSearchParams(filters as Record<string, string>);
+              window.open(`/api/leads/export?${params.toString()}`, "_blank");
+            }}
+            className="h-8 px-3 text-sm bg-muted rounded-lg hover:bg-muted/80 flex items-center gap-1.5"
+          >
             <Download className="w-3.5 h-3.5" />
             Export
+          </button>
+          {/* Delete */}
+          <button
+            onClick={async () => {
+              if (!confirm(`Delete ${selected.size} leads? This is permanent.`)) return;
+              await fetch("/api/leads/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ids: Array.from(selected), action: "delete" }),
+              });
+              setSelected(new Set());
+              router.refresh();
+            }}
+            className="h-8 px-3 text-sm bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 flex items-center gap-1.5"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete
           </button>
           <button
             onClick={() => setSelected(new Set())}
