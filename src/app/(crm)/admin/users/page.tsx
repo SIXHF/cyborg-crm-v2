@@ -19,6 +19,10 @@ export default async function UsersPage() {
       fullName: users.fullName,
       role: users.role,
       isActive: users.isActive,
+      leadsVisibility: users.leadsVisibility,
+      sipUsername: users.sipUsername,
+      sipPassword: users.sipPassword,
+      allowedIps: users.allowedIps,
       lastLoginAt: users.lastLoginAt,
       createdAt: users.createdAt,
     })

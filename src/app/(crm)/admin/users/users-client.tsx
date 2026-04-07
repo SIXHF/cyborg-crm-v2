@@ -11,6 +11,10 @@ interface UserRow {
   fullName: string;
   role: string;
   isActive: boolean;
+  leadsVisibility?: string | null;
+  sipUsername?: string | null;
+  sipPassword?: string | null;
+  allowedIps?: string | null;
   lastLoginAt: string | null;
   createdAt: string;
 }
@@ -32,6 +36,10 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
     fullName: "",
     role: "agent" as string,
     isActive: true,
+    sipUsername: "",
+    sipPassword: "",
+    leadsVisibility: "own" as string,
+    allowedIps: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -39,7 +47,10 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
 
   function openAdd() {
     setEditingUser(null);
-    setForm({ username: "", email: "", password: "", fullName: "", role: "agent", isActive: true });
+    setForm({
+      username: "", email: "", password: "", fullName: "", role: "agent", isActive: true,
+      sipUsername: "", sipPassword: "", leadsVisibility: "own", allowedIps: "",
+    });
     setError("");
     setShowForm(true);
   }
@@ -53,6 +64,10 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
       fullName: u.fullName,
       role: u.role,
       isActive: u.isActive,
+      sipUsername: u.sipUsername || "",
+      sipPassword: u.sipPassword || "",
+      leadsVisibility: u.leadsVisibility || "own",
+      allowedIps: u.allowedIps || "",
     });
     setError("");
     setShowForm(true);
@@ -88,7 +103,7 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
   }
 
   async function handleDelete(userId: number) {
-    if (!confirm("Are you sure you want to delete this user?")) return;
+    if (!confirm("Are you sure you want to deactivate this user?")) return;
     setDeleting(userId);
     try {
       const res = await fetch("/api/users", {
@@ -97,7 +112,7 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
         body: JSON.stringify({ id: userId }),
       });
       if (res.ok) {
-        setUsersList((prev) => prev.filter((u) => u.id !== userId));
+        setUsersList((prev) => prev.map((u) => u.id === userId ? { ...u, isActive: false } : u));
       }
     } catch {
       // ignore
@@ -125,6 +140,8 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">User</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Role</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">SIP</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">Visibility</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Last Login</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Created</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Actions</th>
@@ -150,6 +167,12 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-muted-foreground text-xs">
+                  {u.sipUsername || "-"}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground text-xs capitalize">
+                  {u.leadsVisibility || "own"}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground text-xs">
                   {u.lastLoginAt ? timeAgo(new Date(u.lastLoginAt)) : "Never"}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground text-xs">
@@ -168,7 +191,7 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
                       onClick={() => handleDelete(u.id)}
                       disabled={deleting === u.id}
                       className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-50"
-                      title="Delete"
+                      title="Deactivate"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -182,35 +205,50 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
 
       {/* Add/Edit User Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-          <div className="bg-card border border-border rounded-xl w-full max-w-md mx-4 shadow-lg">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center overflow-y-auto py-8">
+          <div className="bg-card border border-border rounded-xl w-full max-w-lg mx-4 shadow-lg">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h3 className="font-semibold">{editingUser ? "Edit User" : "Add User"}</h3>
               <button onClick={() => setShowForm(false)} className="p-1 text-muted-foreground hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSubmit} className="p-4 space-y-4">
+            <form onSubmit={handleSubmit} className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Basic Info */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Username</label>
+                  <input
+                    type="text"
+                    required
+                    value={form.username}
+                    onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                    className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Email</label>
+                  <input
+                    type="email"
+                    required
+                    value={form.email}
+                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                    className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Username</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Full Name</label>
                 <input
                   type="text"
                   required
-                  value={form.username}
-                  onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                  value={form.fullName}
+                  onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
                   className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Email</label>
-                <input
-                  type="email"
-                  required
-                  value={form.email}
-                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                  className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
-                />
-              </div>
+
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1">
                   Password {editingUser && <span className="text-muted-foreground">(leave blank to keep current)</span>}
@@ -223,38 +261,86 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
                   className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Full Name</label>
-                <input
-                  type="text"
-                  required
-                  value={form.fullName}
-                  onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-                  className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
-                />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Role</label>
+                  <select
+                    value={form.role}
+                    onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
+                    className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="processor">Processor</option>
+                    <option value="agent">Agent</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Leads Visibility</label>
+                  <select
+                    value={form.leadsVisibility}
+                    onChange={(e) => setForm((f) => ({ ...f, leadsVisibility: e.target.value }))}
+                    className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                  >
+                    <option value="all">All Leads</option>
+                    <option value="own">Own Leads</option>
+                    <option value="assigned">Assigned Leads</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Role</label>
-                <select
-                  value={form.role}
-                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
-                  className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
-                >
-                  <option value="admin">Admin</option>
-                  <option value="processor">Processor</option>
-                  <option value="agent">Agent</option>
-                </select>
+
+              {/* SIP Credentials */}
+              <div className="border-t border-border pt-4">
+                <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">SIP Credentials</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">SIP Username</label>
+                    <input
+                      type="text"
+                      value={form.sipUsername}
+                      onChange={(e) => setForm((f) => ({ ...f, sipUsername: e.target.value }))}
+                      placeholder="e.g. 1001"
+                      className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">SIP Password</label>
+                    <input
+                      type="text"
+                      value={form.sipPassword}
+                      onChange={(e) => setForm((f) => ({ ...f, sipPassword: e.target.value }))}
+                      placeholder="SIP password"
+                      className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="isActive"
-                  checked={form.isActive}
-                  onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))}
-                  className="rounded"
-                />
-                <label htmlFor="isActive" className="text-sm">Active</label>
+
+              {/* Access Control */}
+              <div className="border-t border-border pt-4">
+                <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Access Control</p>
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Allowed IPs (comma-separated, leave blank for any)</label>
+                  <textarea
+                    value={form.allowedIps}
+                    onChange={(e) => setForm((f) => ({ ...f, allowedIps: e.target.value }))}
+                    placeholder="e.g. 192.168.1.1, 10.0.0.0/24"
+                    rows={2}
+                    className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-sm resize-none"
+                  />
+                </div>
+                <div className="flex items-center gap-2 mt-3">
+                  <input
+                    type="checkbox"
+                    id="isActive"
+                    checked={form.isActive}
+                    onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))}
+                    className="rounded"
+                  />
+                  <label htmlFor="isActive" className="text-sm">Active</label>
+                </div>
               </div>
+
               {error && (
                 <div className="text-sm px-3 py-2 rounded-lg bg-red-500/10 text-red-500">{error}</div>
               )}

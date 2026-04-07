@@ -104,7 +104,7 @@ export async function login(
       )
     );
 
-  if (recentAttempts[0]?.count >= 5) {
+  if (Number(recentAttempts[0]?.count) >= 5) {
     return { success: false, error: 'Too many failed attempts. Try again in 15 minutes.' };
   }
 
