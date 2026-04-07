@@ -214,9 +214,12 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     let osc1: OscillatorNode | null = null;
     let osc2: OscillatorNode | null = null;
     let interval: NodeJS.Timeout | null = null;
+    let stopped = false;
 
     try {
       audioCtx = new AudioContext();
+      // Resume context (required by browser autoplay policy)
+      audioCtx.resume();
       osc1 = audioCtx.createOscillator();
       osc2 = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
@@ -225,24 +228,31 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       osc1.connect(gain);
       osc2.connect(gain);
       gain.connect(audioCtx.destination);
-      gain.gain.value = 0.15;
+      gain.gain.value = 0;
       osc1.start();
       osc2.start();
 
       // US ringback: 2s on, 4s off (6s cycle)
-      function ringCycle() {
-        if (!audioCtx) return;
+      // Schedule multiple cycles ahead to avoid gaps
+      function scheduleRingCycles() {
+        if (!audioCtx || stopped) return;
         const now = audioCtx.currentTime;
-        gain.gain.setValueAtTime(0.15, now);
-        gain.gain.setValueAtTime(0, now + 2);
+        // Schedule 3 full cycles ahead (18s of audio)
+        for (let i = 0; i < 3; i++) {
+          const cycleStart = now + (i * 6);
+          gain.gain.setValueAtTime(0.15, cycleStart);         // ON at cycle start
+          gain.gain.setValueAtTime(0, cycleStart + 2);        // OFF after 2s
+        }
       }
-      ringCycle(); // Start immediately
-      interval = setInterval(ringCycle, 6000);
+      scheduleRingCycles();
+      // Re-schedule every 15s to keep the pattern going
+      interval = setInterval(scheduleRingCycles, 15000);
     } catch (e) {
       console.error("Ringback tone error:", e);
     }
 
     return () => {
+      stopped = true;
       if (interval) clearInterval(interval);
       try { osc1?.stop(); } catch {}
       try { osc2?.stop(); } catch {}
