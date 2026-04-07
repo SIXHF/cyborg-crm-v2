@@ -230,19 +230,43 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
-  // Chrome mutes ALL local audio (AudioContext, <audio>, MediaStream, iframe)
-  // during WebRTC calls. No code-level workaround exists.
-  // Instead, rely on the SIP server's in-band ringback via earlyMedia: true.
-  // The 183 Session Progress response includes RTP audio that SIP.js plays
-  // through audioRef — this IS WebRTC audio so Chrome doesn't mute it.
+  // Chrome mutes local audio when getUserMedia is called for the FIRST time.
+  // But after getUserMedia has been called and released, subsequent calls
+  // don't cause the same disruption. The second call's ringback works because
+  // the first call already "primed" Chrome's audio subsystem.
   //
-  // startRingback/stopRingback are kept as no-ops for the call flow logic.
+  // Fix: prime getUserMedia on page load — call it once and immediately
+  // release the stream. Chrome's audio subsystem is initialized without
+  // keeping the mic active (no Windows ducking).
+  const ringbackElRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Prime Chrome's audio subsystem
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      stream.getTracks().forEach(t => t.stop()); // release immediately
+      log("Audio system primed (getUserMedia called and released)");
+    }).catch(() => {});
+  }, []);
+
   function startRingback() {
-    log("Ringback: waiting for server early media (183)");
+    stopRingback();
+    const audio = new Audio("/ringback.mp3?v=" + Date.now());
+    audio.loop = true;
+    audio.volume = 1.0;
+    ringbackElRef.current = audio;
+    audio.play()
+      .then(() => log("Ringback playing"))
+      .catch(e => log("Ringback failed: " + e.message));
   }
 
   function stopRingback() {
-    // Server early media stops automatically when call connects
+    const el = ringbackElRef.current;
+    if (el) {
+      el.pause();
+      el.src = "";
+      ringbackElRef.current = null;
+    }
+    log("Ringback stopped");
   }
 
   // Safety net: stop ringback when call becomes active/ended/idle
@@ -319,7 +343,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
 
       await simpleUser.call(
         target,
-        { earlyMedia: true }, // Enable 183 early media — server provides ringback
+        {}, // InviterOptions
         {
           sessionDescriptionHandlerOptions: {
             constraints: { audio: true, video: false },
