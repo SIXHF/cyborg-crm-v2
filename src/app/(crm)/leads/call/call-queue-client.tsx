@@ -226,44 +226,12 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone — dedicated audio element with auto-resume ──
+  // ── Ringback tone — static WAV file served via HTTP ──
+  // Previous approaches (data URI, Blob URL, AudioContext) all failed.
+  // Static file served over HTTP is the most reliable audio source.
   const ringbackRef = useRef<HTMLAudioElement>(null);
   const ringbackPlayingRef = useRef(false);
   const ringbackMonitorRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    // Generate 30s ringback WAV (8kHz, 480KB) as base64 data URI
-    const sr = 8000;
-    const cycleLen = sr * 6;
-    const toneLen = sr * 2;
-    const total = cycleLen * 5;
-    const buf = new ArrayBuffer(44 + total * 2);
-    const dv = new DataView(buf);
-    const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
-    w(0, "RIFF"); dv.setUint32(4, 36 + total * 2, true);
-    w(8, "WAVE"); w(12, "fmt "); dv.setUint32(16, 16, true);
-    dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
-    dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
-    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
-    w(36, "data"); dv.setUint32(40, total * 2, true);
-    for (let i = 0; i < total; i++) {
-      let s = 0;
-      if ((i % cycleLen) < toneLen) {
-        const t = i / sr;
-        s = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.2 * 32767;
-      }
-      dv.setInt16(44 + i * 2, s | 0, true);
-    }
-    // Use base64 data URI — more reliable than Blob URL
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const dataUri = "data:audio/wav;base64," + btoa(binary);
-    if (ringbackRef.current) {
-      ringbackRef.current.src = dataUri;
-      ringbackRef.current.load();
-    }
-  }, []);
 
   function startRingback() {
     const el = ringbackRef.current;
@@ -371,8 +339,14 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               const code = response?.message?.statusCode;
               log(`Call rejected: SIP ${code}`);
               stopRingback();
-              setCallState("ended");
-              setShowDisposition(true);
+              if (dialedNumberRef.current) {
+                setDialedNumber(null);
+                dialedNumberRef.current = null;
+                setCallState("idle");
+              } else {
+                setCallState("ended");
+                setShowDisposition(true);
+              }
             },
           },
         },
@@ -597,7 +571,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
-      <audio ref={ringbackRef} loop preload="auto" style={{ display: "none" }} />
+      <audio ref={ringbackRef} loop preload="auto" src="/ringback.wav" style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
@@ -798,8 +772,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               </div>
             )}
 
-            {/* Lead Detail Panel — visible during ringing/active */}
-            {currentLead && (callState === "ringing" || callState === "active") && (
+            {/* Lead Detail Panel — visible during ringing/active, hidden for manual dial */}
+            {currentLead && !dialedNumber && (callState === "ringing" || callState === "active") && (
               <div className="w-full bg-card border border-border rounded-xl p-4 text-left space-y-3 text-sm">
                 <div className="flex items-center justify-between">
                   <h4 className="font-semibold text-base">Lead Details</h4>
