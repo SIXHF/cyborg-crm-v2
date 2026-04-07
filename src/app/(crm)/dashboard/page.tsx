@@ -82,7 +82,8 @@ async function getTrendData() {
     const d = new Date();
     d.setDate(d.getDate() - i);
     const key = d.toISOString().slice(0, 10);
-    const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const label = `${months[d.getMonth()]} ${d.getDate()}`;
     days.push({ day: key, label, count: dayMap.get(key) || 0 });
   }
 
@@ -259,7 +260,7 @@ export default async function DashboardPage() {
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">{entry.details}</p>
                     )}
                   </div>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap" suppressHydrationWarning>
                     {entry.createdAt.toLocaleString("en-US", {
                       month: "short",
                       day: "numeric",

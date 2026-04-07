@@ -21,6 +21,17 @@ interface QueueItem {
   refNumber: string;
   cardBrand: string | null;
   cardIssuer: string | null;
+  address: string | null;
+  city: string | null;
+  zip: string | null;
+  dob: string | null;
+  ssnLast4: string | null;
+  annualIncome: string | null;
+  employmentStatus: string | null;
+  creditScoreRange: string | null;
+  cardNumberBin: string | null;
+  notes: string | null;
+  leadScore: number | null;
 }
 
 interface SipCredentials {
@@ -83,6 +94,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const telnyxClientRef = useRef<any>(null);
   const activeCallRef = useRef<any>(null);
 
+  const [ssnRevealed, setSsnRevealed] = useState(false);
   const currentLead = queue[currentIdx];
 
   function log(msg: string) {
@@ -193,6 +205,34 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       if (callState !== "ended") setCallTimer(0);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [callState]);
+
+  // Ringback tone: US pattern 440Hz + 480Hz, 2s on / 4s off
+  useEffect(() => {
+    if (callState !== "ringing") return;
+    const audioCtx = new AudioContext();
+    const osc1 = audioCtx.createOscillator();
+    const osc2 = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc1.frequency.value = 440;
+    osc2.frequency.value = 480;
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(audioCtx.destination);
+    gain.gain.value = 0.1;
+    osc1.start();
+    osc2.start();
+    // Pattern: 2s on, 4s off (6s cycle)
+    const interval = setInterval(() => {
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0, audioCtx.currentTime + 2);
+    }, 6);
+    return () => {
+      clearInterval(interval);
+      osc1.stop();
+      osc2.stop();
+      audioCtx.close();
+    };
   }, [callState]);
 
   function formatTimer(s: number) {
@@ -326,6 +366,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     setShowDtmf(false);
     setShowDtmfCapture(false);
     setCallNotes("");
+    setSsnRevealed(false);
     setDtmfCcn(""); setDtmfExp(""); setDtmfCvc(""); setDtmfSsn("");
     setCallState("idle");
     setCallTimer(0);
@@ -522,7 +563,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             <p className="text-sm mt-1">Go to Leads and add leads to your call queue</p>
           </div>
         ) : (
-          <div className="w-full max-w-md text-center space-y-6">
+          <div className="w-full max-w-lg text-center space-y-6">
             {/* Lead info */}
             {currentLead && (
               <div>
@@ -612,6 +653,89 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
                     {digit}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Lead Detail Panel — visible during ringing/active */}
+            {currentLead && (callState === "ringing" || callState === "active") && (
+              <div className="w-full bg-card border border-border rounded-xl p-4 text-left space-y-3 text-sm">
+                <h4 className="font-semibold text-base">Lead Details</h4>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Name</span>
+                    <span className="font-medium">{[currentLead.firstName, currentLead.lastName].filter(Boolean).join(" ") || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Phone</span>
+                    <span className="font-medium">{currentLead.phone ? formatPhone(currentLead.phone) : "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Email</span>
+                    <span className="font-medium truncate max-w-[140px]">{currentLead.email || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Status</span>
+                    <span className="font-medium capitalize">{currentLead.status.replace("_", " ")}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Address</span>
+                    <span className="font-medium truncate max-w-[140px]">{currentLead.address || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">City/State/ZIP</span>
+                    <span className="font-medium">{[currentLead.city, currentLead.state, currentLead.zip].filter(Boolean).join(", ") || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Card Brand</span>
+                    <span className="font-medium">{currentLead.cardBrand || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Card Issuer</span>
+                    <span className="font-medium">{currentLead.cardIssuer || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Card BIN</span>
+                    <span className="font-medium">{currentLead.cardNumberBin || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">SSN Last 4</span>
+                    <span
+                      className="font-medium cursor-pointer"
+                      onClick={() => setSsnRevealed(!ssnRevealed)}
+                      title="Click to reveal/hide"
+                    >
+                      {currentLead.ssnLast4 ? (ssnRevealed ? currentLead.ssnLast4 : "****") : "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">DOB</span>
+                    <span className="font-medium">{currentLead.dob || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Credit Score</span>
+                    <span className="font-medium">{currentLead.creditScoreRange || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Annual Income</span>
+                    <span className="font-medium">{currentLead.annualIncome || "—"}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-border/30">
+                    <span className="text-muted-foreground">Employment</span>
+                    <span className="font-medium">{currentLead.employmentStatus || "—"}</span>
+                  </div>
+                  {currentLead.leadScore != null && (
+                    <div className="flex justify-between py-1 border-b border-border/30">
+                      <span className="text-muted-foreground">Lead Score</span>
+                      <span className="font-medium">{currentLead.leadScore}</span>
+                    </div>
+                  )}
+                </div>
+                {currentLead.notes && (
+                  <div className="pt-1">
+                    <span className="text-muted-foreground text-xs">Notes</span>
+                    <p className="text-sm mt-0.5 whitespace-pre-wrap">{currentLead.notes}</p>
+                  </div>
+                )}
               </div>
             )}
 

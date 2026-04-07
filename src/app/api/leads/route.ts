@@ -26,6 +26,14 @@ export async function POST(req: NextRequest) {
     ssnLast4: body.ssnLast4,
   });
 
+  // Extract custom fields from body
+  const customFields: Record<string, string> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (key.startsWith("cf_")) {
+      customFields[key.slice(3)] = value as string;
+    }
+  }
+
   // Clean phone to digits
   const phone = body.phone?.replace(/\D/g, "") || null;
   const landline = body.landline?.replace(/\D/g, "") || null;
@@ -73,6 +81,7 @@ export async function POST(req: NextRequest) {
     agentId: body.agentId ? parseInt(body.agentId) : user.id,
     leadScore,
     notes: body.notes || null,
+    customFields: Object.keys(customFields).length > 0 ? customFields : {},
   }).returning({ id: leads.id, refNumber: leads.refNumber });
 
   await audit(user.id, user.username, "create_lead", "lead", lead.id, `Created lead ${lead.refNumber}`);

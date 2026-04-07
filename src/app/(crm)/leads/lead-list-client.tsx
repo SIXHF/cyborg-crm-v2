@@ -46,6 +46,8 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
   const [search, setSearch] = useState(filters.q || "");
   const [showFilters, setShowFilters] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [queuingLeads, setQueuingLeads] = useState<Set<number>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
 
   function navigate(params: Record<string, string>) {
     const sp = new URLSearchParams();
@@ -242,19 +244,25 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
                     </td>
                     <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
                       <button
+                        disabled={queuingLeads.has(lead.id)}
                         onClick={async () => {
-                          const res = await fetch("/api/call-queue", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ leadId: lead.id }),
-                          });
-                          if (res.ok) alert("Added to queue");
-                          else {
-                            const d = await res.json();
-                            alert(d.error || "Failed");
+                          setQueuingLeads(prev => new Set(prev).add(lead.id));
+                          try {
+                            const res = await fetch("/api/call-queue", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ leadId: lead.id }),
+                            });
+                            if (res.ok) alert("Added to queue");
+                            else {
+                              const d = await res.json();
+                              alert(d.error || "Failed");
+                            }
+                          } finally {
+                            setQueuingLeads(prev => { const n = new Set(prev); n.delete(lead.id); return n; });
                           }
                         }}
-                        className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                        className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50 disabled:pointer-events-none"
                         title="Add to Call Queue"
                       >
                         <Phone className="w-3.5 h-3.5" />
@@ -301,18 +309,22 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
           <span className="text-sm font-medium">{selected.size} selected</span>
           {/* Status update */}
           <select
+            disabled={batchLoading}
             onChange={async (e) => {
               if (!e.target.value) return;
               if (!confirm(`Update ${selected.size} leads to "${e.target.value.replace("_"," ")}"?`)) { e.target.value = ""; return; }
-              await fetch("/api/leads/batch", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ids: Array.from(selected), action: "update_status", value: e.target.value }),
-              });
-              setSelected(new Set());
-              router.refresh();
+              setBatchLoading(true);
+              try {
+                await fetch("/api/leads/batch", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ ids: Array.from(selected), action: "update_status", value: e.target.value }),
+                });
+                setSelected(new Set());
+                router.refresh();
+              } finally { setBatchLoading(false); }
             }}
-            className="h-8 px-2 text-xs bg-muted border border-border rounded-lg"
+            className="h-8 px-2 text-xs bg-muted border border-border rounded-lg disabled:opacity-50"
             defaultValue=""
           >
             <option value="">Change Status…</option>
@@ -322,18 +334,22 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
           </select>
           {/* Add to queue */}
           <button
+            disabled={batchLoading}
             onClick={async () => {
-              for (const id of selected) {
-                await fetch("/api/call-queue", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ leadId: id }),
-                }).catch(() => {});
-              }
-              alert(`${selected.size} leads added to call queue`);
-              setSelected(new Set());
+              setBatchLoading(true);
+              try {
+                for (const id of selected) {
+                  await fetch("/api/call-queue", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ leadId: id }),
+                  }).catch(() => {});
+                }
+                alert(`${selected.size} leads added to call queue`);
+                setSelected(new Set());
+              } finally { setBatchLoading(false); }
             }}
-            className="h-8 px-3 text-sm bg-muted rounded-lg hover:bg-muted/80 flex items-center gap-1.5"
+            className="h-8 px-3 text-sm bg-muted rounded-lg hover:bg-muted/80 flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
           >
             <Phone className="w-3.5 h-3.5" />
             Add to Queue
@@ -351,17 +367,21 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
           </button>
           {/* Delete */}
           <button
+            disabled={batchLoading}
             onClick={async () => {
               if (!confirm(`Delete ${selected.size} leads? This is permanent.`)) return;
-              await fetch("/api/leads/batch", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ids: Array.from(selected), action: "delete" }),
-              });
-              setSelected(new Set());
-              router.refresh();
+              setBatchLoading(true);
+              try {
+                await fetch("/api/leads/batch", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ ids: Array.from(selected), action: "delete" }),
+                });
+                setSelected(new Set());
+                router.refresh();
+              } finally { setBatchLoading(false); }
             }}
-            className="h-8 px-3 text-sm bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 flex items-center gap-1.5"
+            className="h-8 px-3 text-sm bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
           >
             <Trash2 className="w-3.5 h-3.5" />
             Delete

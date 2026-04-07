@@ -24,6 +24,17 @@ export default async function CallQueuePage() {
       refNumber: leads.refNumber,
       cardBrand: leads.cardBrand,
       cardIssuer: leads.cardIssuer,
+      address: leads.address,
+      city: leads.city,
+      zip: leads.zip,
+      dob: leads.dob,
+      ssnLast4: leads.ssnLast4,
+      annualIncome: leads.annualIncome,
+      employmentStatus: leads.employmentStatus,
+      creditScoreRange: leads.creditScoreRange,
+      cardNumberBin: leads.cardNumberBin,
+      notes: leads.notes,
+      leadScore: leads.leadScore,
     })
     .from(callQueue)
     .innerJoin(leads, eq(callQueue.leadId, leads.id))

@@ -118,7 +118,12 @@ export function LeadDetailClient({ data, currentUser }: Props) {
     }
   }
 
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   async function addToCallQueue() {
+    if (queueLoading) return;
+    setQueueLoading(true);
     try {
       const res = await fetch("/api/call-queue", {
         method: "POST",
@@ -133,6 +138,8 @@ export function LeadDetailClient({ data, currentUser }: Props) {
       }
     } catch {
       alert("Failed to add to call queue");
+    } finally {
+      setQueueLoading(false);
     }
   }
 
@@ -161,6 +168,8 @@ export function LeadDetailClient({ data, currentUser }: Props) {
   }
 
   async function deleteLead() {
+    if (deleteLoading) return;
+    setDeleteLoading(true);
     try {
       const res = await fetch(`/api/leads/${lead.id}`, { method: "DELETE" });
       if (res.ok) {
@@ -171,6 +180,8 @@ export function LeadDetailClient({ data, currentUser }: Props) {
       }
     } catch {
       alert("Failed to delete lead");
+    } finally {
+      setDeleteLoading(false);
     }
   }
 
@@ -257,7 +268,11 @@ export function LeadDetailClient({ data, currentUser }: Props) {
     }
   }
 
+  const [deleteCardLoading, setDeleteCardLoading] = useState(false);
+
   async function deleteCard(cardId: number) {
+    if (deleteCardLoading) return;
+    setDeleteCardLoading(true);
     try {
       const res = await fetch(`/api/leads/${lead.id}/cards`, {
         method: "DELETE",
@@ -273,6 +288,8 @@ export function LeadDetailClient({ data, currentUser }: Props) {
       }
     } catch {
       alert("Failed to delete card");
+    } finally {
+      setDeleteCardLoading(false);
     }
   }
 
@@ -539,11 +556,12 @@ export function LeadDetailClient({ data, currentUser }: Props) {
         <div className="flex items-center gap-2">
           <button
             onClick={addToCallQueue}
-            className="h-9 px-3 bg-muted border border-border text-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-muted/80 transition-colors"
+            disabled={queueLoading}
+            className="h-9 px-3 bg-muted border border-border text-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-muted/80 transition-colors disabled:opacity-50 disabled:pointer-events-none"
             title="Add to Call Queue"
           >
             <PhoneForwarded className="w-4 h-4" />
-            <span className="hidden sm:inline">Queue</span>
+            <span className="hidden sm:inline">{queueLoading ? "Adding..." : "Queue"}</span>
           </button>
           <button
             onClick={() => setSmsOpen(!smsOpen)}
@@ -582,9 +600,10 @@ export function LeadDetailClient({ data, currentUser }: Props) {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={deleteLead}
-                    className="h-9 px-3 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors"
+                    disabled={deleteLoading}
+                    className="h-9 px-3 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                   >
-                    Confirm Delete
+                    {deleteLoading ? "Deleting..." : "Confirm Delete"}
                   </button>
                   <button
                     onClick={() => setDeleteConfirm(false)}
