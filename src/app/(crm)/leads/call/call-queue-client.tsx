@@ -247,45 +247,68 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
-  // Chrome kills audio during WebRTC: loop breaks, ended event unreliable.
-  // Use a watchdog timer that forces restart every time the audio stops.
-  const ringbackElRef = useRef<HTMLAudioElement | null>(null);
-  const ringbackWatchdogRef = useRef<NodeJS.Timeout | null>(null);
+  // Chrome silently mutes ALL non-WebRTC audio during calls. The audio
+  // element reports "playing" but no sound reaches the speakers.
+  // The ONLY audio Chrome allows: WebRTC PeerConnection audio.
+  //
+  // Solution: connect our ringback oscillators to the SAME AudioContext
+  // that processes the PeerConnection's remote audio. By routing the
+  // remote track through our context, Chrome treats the entire context
+  // as "communications audio" and our oscillators are audible.
+  const ringbackCtxRef = useRef<AudioContext | null>(null);
 
   function startRingback() {
     stopRingback();
     try {
-      const audio = new Audio("/ringback.mp3");
-      audio.volume = 1.0;
-      ringbackElRef.current = audio;
-      audio.play()
-        .then(() => log("Ringback playing"))
-        .catch(e => log("Ringback failed: " + e.message));
+      const client = telnyxClientRef.current;
+      const pc = client?.session?.sessionDescriptionHandler?.peerConnection as RTCPeerConnection | undefined;
 
-      // Watchdog: every 500ms, if audio stopped/paused/ended, force restart
-      ringbackWatchdogRef.current = setInterval(() => {
-        const el = ringbackElRef.current;
-        if (!el) return;
-        if (el.paused || el.ended) {
-          el.currentTime = 0;
-          el.play().catch(() => {});
+      const ctx = new AudioContext();
+      ringbackCtxRef.current = ctx;
+
+      // Connect PeerConnection's remote audio through this context
+      // This makes Chrome treat the context as "communications audio"
+      if (pc) {
+        const receivers = pc.getReceivers();
+        const audioTrack = receivers.find((r: any) => r.track?.kind === "audio")?.track;
+        if (audioTrack) {
+          const remoteStream = new MediaStream([audioTrack]);
+          const remoteSource = ctx.createMediaStreamSource(remoteStream);
+          remoteSource.connect(ctx.destination);
+          log("Remote audio track connected to ringback context");
         }
-      }, 500);
+      }
+
+      // Ringback oscillators in the same context
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc1.frequency.value = 440;
+      osc2.frequency.value = 480;
+      gain.gain.value = 0.0001;
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      osc1.start();
+      osc2.start();
+
+      // Gain envelope: 2s on / 4s off
+      const base = ctx.currentTime;
+      for (let i = 0; i < 30; i++) {
+        gain.gain.setValueAtTime(0.2, base + i * 6);
+        gain.gain.setValueAtTime(0.0001, base + i * 6 + 2);
+      }
+
+      log("Ringback playing via PeerConnection audio context");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
   }
 
   function stopRingback() {
-    if (ringbackWatchdogRef.current) {
-      clearInterval(ringbackWatchdogRef.current);
-      ringbackWatchdogRef.current = null;
-    }
-    const el = ringbackElRef.current;
-    if (el) {
-      el.pause();
-      el.src = "";
-      ringbackElRef.current = null;
+    if (ringbackCtxRef.current) {
+      ringbackCtxRef.current.close().catch(() => {});
+      ringbackCtxRef.current = null;
       log("Ringback stopped");
     }
   }
