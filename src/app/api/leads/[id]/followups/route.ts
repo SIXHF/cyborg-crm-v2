@@ -39,13 +39,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
+  const { id: leadIdParam } = await params;
+  const leadId = parseInt(leadIdParam);
+
   await db
     .update(leadFollowups)
     .set({
       isDone: isDone !== false,
       completedAt: isDone !== false ? new Date() : null,
     })
-    .where(eq(leadFollowups.id, parseInt(followupId)));
+    .where(and(eq(leadFollowups.id, parseInt(followupId)), eq(leadFollowups.leadId, leadId)));
 
   return NextResponse.json({ success: true });
 }

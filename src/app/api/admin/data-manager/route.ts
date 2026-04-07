@@ -55,10 +55,11 @@ export async function POST(req: NextRequest) {
         if (count === 0) return NextResponse.json({ done: true, deleted: 0, remaining: 0 });
 
         // TRUNCATE — instant, no transaction wrapper
-        for (const table of CHILD_TABLES) {
-          try { await db.execute(sql`TRUNCATE TABLE ${sql.identifier((table as any)[Symbol.for("drizzle:Name")])} CASCADE`); } catch {}
+        const childTableNames = ['lead_cards','lead_cosigners','lead_employers','lead_vehicles','lead_relatives','lead_addresses','lead_emails','lead_licenses','lead_comments','lead_attachments','lead_followups','lead_views','call_queue','call_log','collab_events'];
+        for (const tbl of childTableNames) {
+          try { await db.execute(sql.raw(`TRUNCATE TABLE "${tbl}" CASCADE`)); } catch {}
         }
-        await db.execute(sql`TRUNCATE TABLE leads CASCADE`);
+        await db.execute(sql.raw('TRUNCATE TABLE "leads" CASCADE'));
         await audit(user.id, user.username, "data_manager", "admin", undefined, `Truncated ALL leads (${count} total)`);
         return NextResponse.json({ done: true, deleted: count, remaining: 0 });
       }
@@ -115,9 +116,11 @@ export async function POST(req: NextRequest) {
 
       case "delete_by_age": {
         const days = parseInt(body.days);
-        if (!days || days < 1) return NextResponse.json({ error: "Invalid days value" }, { status: 400 });
+        if (!days || days < 1 || isNaN(days)) return NextResponse.json({ error: "Invalid days value" }, { status: 400 });
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - days);
         const result = await batchDeleteWhere(
-          sql`${leads.createdAt} < NOW() - INTERVAL '${sql.raw(String(days))} days'`
+          sql`${leads.createdAt} < ${cutoffDate}`
         );
         if (result.deleted && result.remaining === 0) {
           await audit(user.id, user.username, "data_manager", "admin", undefined, `Deleted leads older than ${days} days`);

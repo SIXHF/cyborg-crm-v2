@@ -76,8 +76,8 @@ export default async function LeadDetailPage({ params }: Props) {
 
   if (!lead) notFound();
 
-  // Record view
-  await db.insert(leadViews).values({ leadId, userId: user.id });
+  // Record view (safe - ignores duplicates)
+  try { await db.insert(leadViews).values({ leadId, userId: user.id }); } catch {}
 
   // Get agent info
   let agentName = null;

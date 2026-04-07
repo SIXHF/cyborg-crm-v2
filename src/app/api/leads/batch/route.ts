@@ -31,7 +31,8 @@ export async function POST(req: NextRequest) {
     const leadIds = ids.map((id: any) => parseInt(id));
 
     if (action === "update_status") {
-      if (!value) return NextResponse.json({ error: "value is required for update_status" }, { status: 400 });
+      const validStatuses = ["new", "in_review", "approved", "declined", "forwarded", "on_hold"];
+      if (!value || !validStatuses.includes(value)) return NextResponse.json({ error: "Invalid status value" }, { status: 400 });
       await db
         .update(leads)
         .set({ status: value as any, updatedAt: new Date() })

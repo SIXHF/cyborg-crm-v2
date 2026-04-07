@@ -59,8 +59,8 @@ export async function getUser(): Promise<SessionUser | null> {
   // Check if user is still active
   if (!row.isActive) return null;
 
-  // Check force logout
-  if (row.forceLogoutAt && new Date(row.forceLogoutAt) > new Date(row.expiresAt)) {
+  // Check force logout — if forceLogoutAt is set and session was created before it, invalidate
+  if (row.forceLogoutAt && new Date(row.forceLogoutAt) > new Date(row.expiresAt.getTime() - 24 * 60 * 60 * 1000)) {
     return null;
   }
 

@@ -58,6 +58,12 @@ export function LeadFormClient({ agents, customFields, currentUser, initialData 
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Validate: at least one identifier required
+    if (!form.firstName && !form.phone && !form.email) {
+      setError("At least one of First Name, Phone, or Email is required.");
+      return;
+    }
+
     setSaving(true);
     setError("");
 
