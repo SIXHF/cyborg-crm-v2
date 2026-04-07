@@ -151,9 +151,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             onCallCreated: () => {
               log("Call created — INVITE sent");
               setCallState("ringing");
-              // Start ringback here too — getUserMedia has completed by this point
-              // (onCallCreated fires after the INVITE is sent, which is after getUserMedia)
-              startRingback();
+              // Do NOT start ringback here — onCallCreated fires BEFORE getUserMedia.
+              // getUserMedia would kill the audio. Ringback starts in onProgress.
             },
             onCallAnswered: () => {
               log("Call answered");
@@ -258,9 +257,13 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
 
   function startRingback() {
     const el = ringbackRef.current;
-    if (!el || ringbackPlayingRef.current) return;
-    ringbackPlayingRef.current = true;
-    el.currentTime = 0;
+    if (!el) return;
+    // Allow re-calling (e.g. 180 then 183) — restart if already "playing" but silent
+    if (!ringbackPlayingRef.current) {
+      ringbackPlayingRef.current = true;
+      el.currentTime = 0;
+    }
+    // Always try to play — in case previous play was interrupted
     el.play().then(() => log("Ringback playing")).catch(e => log("Ringback play failed: " + e.message));
   }
 
