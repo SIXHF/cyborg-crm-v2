@@ -258,47 +258,47 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   // the ringback plays through the call audio path.
   const ringbackCtxRef = useRef<AudioContext | null>(null);
 
+  const ringbackAudioElRef = useRef<HTMLAudioElement | null>(null);
+
   function startRingback() {
     stopRingback();
     try {
-      // Single clean output: AudioContext → audioRef.srcObject
-      // audioRef is the WebRTC element — Chrome won't mute it
+      // Route the MP3 file through AudioContext → MediaStream → audioRef
+      // The MP3 plays fine on its own. AudioContext routes it through
+      // a MediaStreamDestination. audioRef.srcObject plays it as WebRTC audio.
       const ctx = new AudioContext();
       ringbackCtxRef.current = ctx;
+
+      const mp3 = new Audio("/ringback.mp3?v=" + Date.now());
+      mp3.crossOrigin = "anonymous"; // required for createMediaElementSource
+      mp3.loop = true;
+      ringbackAudioElRef.current = mp3;
+
+      const source = ctx.createMediaElementSource(mp3);
       const dest = ctx.createMediaStreamDestination();
+      source.connect(dest);
 
-      // TWO oscillators that NEVER stop
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc1.frequency.value = 440;
-      osc2.frequency.value = 480;
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(dest);
-
-      // Gain envelope: 2s on / 4s off (0.01 not 0.0001 for "off" — Chrome
-      // may kill audio path if it thinks the signal is silent)
-      gain.gain.value = 0.25;
-      osc1.start();
-      osc2.start();
-      const base = ctx.currentTime;
-      for (let i = 0; i < 30; i++) {
-        gain.gain.setValueAtTime(0.25, base + i * 6);
-        gain.gain.setValueAtTime(0.01, base + i * 6 + 2);
-      }
-
+      // Set the routed stream on audioRef (WebRTC audio element)
       if (audioRef.current) {
         audioRef.current.srcObject = dest.stream;
         audioRef.current.play().catch(() => {});
       }
-      log("Ringback playing via audioRef.srcObject");
+
+      // Start the MP3 playback (feeds into AudioContext)
+      mp3.play()
+        .then(() => log("Ringback playing (MP3 → AudioContext → audioRef)"))
+        .catch(e => log("Ringback failed: " + e.message));
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
   }
 
   function stopRingback() {
+    if (ringbackAudioElRef.current) {
+      ringbackAudioElRef.current.pause();
+      ringbackAudioElRef.current.src = "";
+      ringbackAudioElRef.current = null;
+    }
     if (ringbackCtxRef.current) {
       ringbackCtxRef.current.close().catch(() => {});
       ringbackCtxRef.current = null;
