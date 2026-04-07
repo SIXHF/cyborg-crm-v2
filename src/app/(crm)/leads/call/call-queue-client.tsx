@@ -226,38 +226,68 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone — static WAV file served via HTTP ──
-  // Previous approaches (data URI, Blob URL, AudioContext) all failed.
-  // Static file served over HTTP is the most reliable audio source.
+  // ── Ringback tone — AudioContext → MediaStream → <audio srcObject> ──
+  // Every other approach failed because Chrome silences file-based <audio>
+  // elements when a WebRTC PeerConnection starts on the same page.
+  // MediaStream-based audio (srcObject) is treated as a "call" by Chrome
+  // and is NOT silenced. So: generate tone via AudioContext oscillators,
+  // pipe through MediaStreamDestination, set as srcObject on <audio>.
   const ringbackRef = useRef<HTMLAudioElement>(null);
+  const ringbackCtxRef = useRef<AudioContext | null>(null);
   const ringbackPlayingRef = useRef(false);
-  const ringbackMonitorRef = useRef<NodeJS.Timeout | null>(null);
 
   function startRingback() {
-    const el = ringbackRef.current;
-    if (!el || ringbackPlayingRef.current) return;
+    if (ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = true;
-    el.currentTime = 0;
-    el.play().then(() => log("Ringback playing")).catch(e => log("Ringback play failed: " + e.message));
-    // Monitor: if something pauses it, resume automatically
-    ringbackMonitorRef.current = setInterval(() => {
-      if (!ringbackPlayingRef.current) return;
-      if (el.paused) {
-        log("Ringback was paused externally — resuming");
-        el.play().catch(() => {});
+
+    try {
+      const ctx = new AudioContext();
+      ringbackCtxRef.current = ctx;
+      const dest = ctx.createMediaStreamDestination();
+
+      // Schedule 20 ring cycles (2min) through the MediaStream
+      const baseTime = ctx.currentTime;
+      for (let i = 0; i < 20; i++) {
+        const startAt = baseTime + i * 6;
+        const stopAt = startAt + 2;
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc1.frequency.value = 440;
+        osc2.frequency.value = 480;
+        gain.gain.value = 0.15;
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(dest); // → MediaStream, NOT ctx.destination
+        osc1.start(startAt);
+        osc1.stop(stopAt);
+        osc2.start(startAt);
+        osc2.stop(stopAt);
       }
-    }, 1000);
+
+      // Pipe the MediaStream into the <audio> element
+      const el = ringbackRef.current;
+      if (el) {
+        el.srcObject = dest.stream;
+        el.play().then(() => log("Ringback playing via MediaStream")).catch(e => log("Ringback play failed: " + e.message));
+      }
+    } catch (e: any) {
+      log("Ringback error: " + e.message);
+    }
   }
 
   function stopRingback() {
     if (!ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = false;
-    if (ringbackMonitorRef.current) {
-      clearInterval(ringbackMonitorRef.current);
-      ringbackMonitorRef.current = null;
-    }
     const el = ringbackRef.current;
-    if (el) { el.pause(); el.currentTime = 0; }
+    if (el) {
+      el.pause();
+      el.srcObject = null;
+    }
+    if (ringbackCtxRef.current) {
+      ringbackCtxRef.current.close().catch(() => {});
+      ringbackCtxRef.current = null;
+    }
     log("Ringback stopped");
   }
 
@@ -571,7 +601,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
-      <audio ref={ringbackRef} loop preload="auto" src="/ringback.wav" style={{ display: "none" }} />
+      <audio ref={ringbackRef} autoPlay style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
