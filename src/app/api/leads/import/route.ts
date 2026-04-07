@@ -311,10 +311,29 @@ export async function POST(req: NextRequest) {
     const csvPath = `/tmp/import_${job.id}.csv`;
     await writeFile(csvPath, text, "utf-8");
 
-    // Update job with file path
+    // Pre-compute byte offsets for each 50K-line chunk (avoids re-reading entire file per chunk)
+    const CHUNK_SIZE = 50000;
+    const chunkOffsets: number[] = [];
+    let bytePos = 0;
+    let lineCount = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === "\n") {
+        lineCount++;
+        if (lineCount === 1) {
+          // First newline = end of header, start of data
+          chunkOffsets.push(i + 1);
+        } else if ((lineCount - 1) % CHUNK_SIZE === 0 && lineCount > 1) {
+          // Start of a new chunk
+          chunkOffsets.push(i + 1);
+        }
+      }
+    }
+
+    // Update job with file path and chunk offsets
     const { sql } = await import("drizzle-orm");
     await db.update(importJobs).set({
       filePath: csvPath,
+      validationRules: { chunkOffsets } as any,
     }).where(sql`id = ${job.id}`);
 
     // Build preview rows (first 5 data rows)

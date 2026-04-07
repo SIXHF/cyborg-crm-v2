@@ -32,6 +32,9 @@ interface ImportStats {
   chunkMs: number;
 }
 
+const CHUNK_SIZE = 50000;
+const PARALLEL_CHUNKS = 4; // Send 4 chunk requests in parallel
+
 export function ImportClient() {
   const [file, setFile] = useState<File | null>(null);
   const [step, setStep] = useState<Step>("upload");
@@ -115,7 +118,7 @@ export function ImportClient() {
     }
   }
 
-  // Step 3: Start chunked import
+  // Step 3: Start parallel chunked import
   async function startImport() {
     if (!uploadResult) return;
     cancelledRef.current = false;
@@ -128,7 +131,7 @@ export function ImportClient() {
     });
 
     try {
-      await processChunks(uploadResult.jobId, uploadResult.totalRows);
+      await processChunksParallel(uploadResult.jobId, uploadResult.totalRows);
     } catch (e: any) {
       if (!cancelledRef.current) {
         setError(e.message);
@@ -137,14 +140,22 @@ export function ImportClient() {
     }
   }
 
-  async function processChunks(jobId: number, total: number) {
-    let done = false;
+  async function processChunksParallel(jobId: number, total: number) {
+    const totalChunks = Math.ceil(total / CHUNK_SIZE);
+    let nextChunk = 0;
+    let totalProcessed = 0;
+    let totalImported = 0;
+    let totalFailed = 0;
+    let lastChunkMs = 0;
 
-    while (!done && !cancelledRef.current) {
+    // Process chunks with N parallel workers
+    async function processOneChunk(chunkIndex: number): Promise<{
+      processed: number; imported: number; failed: number; chunkMs: number; done: boolean;
+    }> {
       const res = await fetch("/api/leads/import/chunk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId }),
+        body: JSON.stringify({ jobId, chunkIndex }),
       });
 
       if (!res.ok) {
@@ -152,27 +163,50 @@ export function ImportClient() {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
-      const data = await res.json();
-      done = data.done;
+      return res.json();
+    }
+
+    while (nextChunk < totalChunks && !cancelledRef.current) {
+      // Launch up to PARALLEL_CHUNKS requests in parallel
+      const batch: number[] = [];
+      for (let i = 0; i < PARALLEL_CHUNKS && nextChunk < totalChunks; i++) {
+        batch.push(nextChunk++);
+      }
+
+      const results = await Promise.all(batch.map(idx => processOneChunk(idx)));
+
+      for (const data of results) {
+        totalImported = data.imported; // Server returns cumulative totals
+        totalFailed = data.failed;
+        totalProcessed = data.processed;
+        lastChunkMs = data.chunkMs || 0;
+      }
+
+      // Use the max processed value from all results (atomic server-side updates)
+      const maxProcessed = Math.max(...results.map(r => r.processed));
+      totalProcessed = maxProcessed;
+      totalImported = Math.max(...results.map(r => r.imported));
+      totalFailed = Math.max(...results.map(r => r.failed));
 
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
-      const speed = elapsed > 0 ? data.processed / elapsed : 0;
-      const remaining = total - data.processed;
+      const speed = elapsed > 0 ? totalProcessed / elapsed : 0;
+      const remaining = total - totalProcessed;
       const eta = speed > 0 ? remaining / speed : 0;
 
       setStats({
-        processed: data.processed,
-        imported: data.imported,
-        failed: data.failed,
+        processed: totalProcessed,
+        imported: totalImported,
+        failed: totalFailed,
         total,
-        done: data.done,
+        done: totalProcessed >= total,
         speed: Math.round(speed),
         eta,
-        chunkMs: data.chunkMs || 0,
+        chunkMs: lastChunkMs,
       });
 
-      if (done) {
+      if (totalProcessed >= total || results.some(r => r.done)) {
         setStep("done");
+        return;
       }
     }
   }
@@ -411,7 +445,7 @@ export function ImportClient() {
           </div>
 
           {stats.chunkMs > 0 && (
-            <p className="text-xs text-muted-foreground">Last chunk: {stats.chunkMs}ms</p>
+            <p className="text-xs text-muted-foreground">Last chunk: {stats.chunkMs}ms | {PARALLEL_CHUNKS} parallel workers</p>
           )}
         </div>
       )}
