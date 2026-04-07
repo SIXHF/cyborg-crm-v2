@@ -91,104 +91,92 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     console.log(`[SIP] ${msg}`);
   }
 
-  // Initialize Telnyx WebRTC client
+  // Initialize SIP.js SimpleUser — connects to Magnus Billing via WSS
   useEffect(() => {
     if (!sipCredentials.username || !sipCredentials.password) {
       log("No SIP credentials configured. Set them in your user profile.");
       return;
     }
 
-    async function initTelnyx() {
+    async function initSipJs() {
       try {
         setRegistering(true);
-        log(`Connecting as ${sipCredentials.username}@${SIP_DOMAIN}...`);
+        const authUser = sipCredentials.authUser || sipCredentials.username;
+        log(`Connecting as ${sipCredentials.username}@${SIP_DOMAIN} via wss://${SIP_DOMAIN}/ws...`);
 
-        const { TelnyxRTC } = await import("@telnyx/webrtc");
+        const { SimpleUser } = await import("sip.js/lib/platform/web");
 
-        const client = new TelnyxRTC({
-          login: sipCredentials.username,
-          password: sipCredentials.password,
-          ringtoneFile: undefined,
-          ringbackFile: undefined,
+        const server = `wss://${SIP_DOMAIN}/ws`;
+        const aor = `sip:${sipCredentials.username}@${SIP_DOMAIN}`;
+
+        const simpleUser = new SimpleUser(server, {
+          aor,
+          media: {
+            remote: { audio: audioRef.current! },
+          },
+          userAgentOptions: {
+            authorizationUsername: authUser,
+            authorizationPassword: sipCredentials.password,
+            displayName: sipCredentials.displayName,
+            contactParams: { transport: "wss" },
+            sessionDescriptionHandlerFactoryOptions: {
+              peerConnectionConfiguration: {
+                iceServers: [
+                  { urls: "stun:stun.l.google.com:19302" },
+                ],
+              },
+            },
+          },
+          delegate: {
+            onCallReceived: async () => {
+              log("Incoming call — auto-answer disabled");
+            },
+            onCallHangup: () => {
+              log("Call ended by remote");
+              setCallState("ended");
+              setShowDisposition(true);
+              activeCallRef.current = null;
+            },
+            onRegistered: () => {
+              log("Registered successfully ✓");
+              setRegistered(true);
+              setRegistering(false);
+            },
+            onUnregistered: () => {
+              log("Unregistered");
+              setRegistered(false);
+            },
+            onServerConnect: () => {
+              log("WebSocket connected");
+            },
+            onServerDisconnect: () => {
+              log("WebSocket disconnected");
+              setRegistered(false);
+            },
+          },
         });
 
-        client.on("telnyx.ready", () => {
-          log("Registered successfully");
-          setRegistered(true);
-          setRegistering(false);
-        });
-
-        client.on("telnyx.error", (error: any) => {
-          log(`Error: ${error?.message || JSON.stringify(error)}`);
-          setRegistered(false);
-          setRegistering(false);
-        });
-
-        client.on("telnyx.socket.close", () => {
-          log("Connection closed");
-          setRegistered(false);
-        });
-
-        client.on("telnyx.notification", (notification: any) => {
-          const call = notification.call;
-          if (!call) return;
-
-          switch (notification.type) {
-            case "callUpdate":
-              handleCallState(call);
-              break;
-          }
-        });
-
-        await client.connect();
-        telnyxClientRef.current = client;
+        await simpleUser.connect();
+        await simpleUser.register();
+        telnyxClientRef.current = simpleUser;
       } catch (e: any) {
         log(`Init failed: ${e.message}`);
         setRegistering(false);
       }
     }
 
-    initTelnyx();
+    initSipJs();
 
     return () => {
-      if (telnyxClientRef.current) {
-        try { telnyxClientRef.current.disconnect(); } catch {}
+      const client = telnyxClientRef.current;
+      if (client) {
+        try { client.unregister(); } catch {}
+        try { client.disconnect(); } catch {}
       }
     };
   }, [sipCredentials.username, sipCredentials.password]);
 
-  function handleCallState(call: any) {
-    const state = call.state;
-    log(`Call state: ${state}`);
-
-    switch (state) {
-      case "trying":
-      case "requesting":
-        setCallState("connecting");
-        break;
-      case "ringing":
-      case "early":
-        setCallState("ringing");
-        break;
-      case "active":
-        setCallState("active");
-        // Attach remote audio
-        if (audioRef.current && call.remoteStream) {
-          audioRef.current.srcObject = call.remoteStream;
-        }
-        break;
-      case "hangup":
-      case "destroy":
-      case "purge":
-        setCallState("ended");
-        setShowDisposition(true);
-        activeCallRef.current = null;
-        if (audioRef.current) {
-          audioRef.current.srcObject = null;
-        }
-        break;
-    }
-  }
+  // SIP.js handles call state via SimpleUser delegates (onCallHangup, session stateChange)
 
   // Call timer
   useEffect(() => {
@@ -226,19 +214,35 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       return;
     }
 
-    const dialNum = formatDialNumber(phoneRaw);
-    log(`Dialing ${dialNum}...`);
+    const dialNum = formatDialNumber(phoneRaw).replace("+", "");
+    const target = `sip:${dialNum}@${SIP_DOMAIN}`;
+    log(`Dialing ${target}...`);
     setCallState("connecting");
 
     try {
-      const call = telnyxClientRef.current.newCall({
-        destinationNumber: dialNum,
-        callerName: sipCredentials.displayName,
-        callerNumber: sipCredentials.username,
-        audio: true,
-        video: false,
+      const simpleUser = telnyxClientRef.current;
+      await simpleUser.call(target, undefined, {
+        sessionDescriptionHandlerOptions: {
+          constraints: { audio: true, video: false },
+        },
       });
-      activeCallRef.current = call;
+      activeCallRef.current = simpleUser.session;
+
+      // Monitor session state
+      if (simpleUser.session) {
+        simpleUser.session.stateChange.addListener((state: any) => {
+          log(`Session state: ${state}`);
+          if (state === "Establishing") {
+            setCallState("ringing");
+          } else if (state === "Established") {
+            setCallState("active");
+          } else if (state === "Terminated") {
+            setCallState("ended");
+            setShowDisposition(true);
+            activeCallRef.current = null;
+          }
+        });
+      }
     } catch (e: any) {
       log(`Call failed: ${e.message}`);
       setCallState("idle");
@@ -246,9 +250,9 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }
 
   function endCall() {
-    if (activeCallRef.current) {
+    if (telnyxClientRef.current) {
       try {
-        activeCallRef.current.hangup();
+        telnyxClientRef.current.hangup();
       } catch (e: any) {
         log(`Hangup error: ${e.message}`);
       }
@@ -258,21 +262,28 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }
 
   function toggleMute() {
-    if (activeCallRef.current) {
-      if (muted) {
-        activeCallRef.current.unmuteAudio();
-      } else {
-        activeCallRef.current.muteAudio();
+    if (telnyxClientRef.current) {
+      try {
+        if (muted) {
+          telnyxClientRef.current.unmute();
+        } else {
+          telnyxClientRef.current.mute();
+        }
+        setMuted(!muted);
+      } catch (e: any) {
+        log(`Mute error: ${e.message}`);
       }
-      setMuted(!muted);
     }
   }
 
   function sendDtmf(digit: string) {
-    if (activeCallRef.current) {
+    if (telnyxClientRef.current?.session) {
       try {
-        activeCallRef.current.dtmf(digit);
-        log(`DTMF: ${digit}`);
+        const session = telnyxClientRef.current.session;
+        if (session.sessionDescriptionHandler) {
+          session.sessionDescriptionHandler.sendDtmf(digit);
+          log(`DTMF: ${digit}`);
+        }
       } catch (e: any) {
         log(`DTMF error: ${e.message}`);
       }

@@ -49,42 +49,49 @@ export function ProfileClient({ user }: Props) {
     setSipTestResult(null);
 
     try {
-      const { TelnyxRTC } = await import("@telnyx/webrtc");
-      const testClient = new TelnyxRTC({
-        login: sipUsername,
-        password: sipPassword,
-      });
+      const { SimpleUser } = await import("sip.js/lib/platform/web");
+      const SIP_DOMAIN = "sip.osetec.net";
+      const server = `wss://${SIP_DOMAIN}/ws`;
+      const aor = `sip:${sipUsername}@${SIP_DOMAIN}`;
+      const authUser = sipAuthUser || sipUsername;
 
       const result = await new Promise<{ ok: boolean; message: string }>((resolve) => {
         const timeout = setTimeout(() => {
-          try { testClient.disconnect(); } catch {}
-          resolve({ ok: false, message: "Connection timeout (10s) — check credentials and network" });
+          resolve({ ok: false, message: "Connection timeout (10s) — check credentials and that wss://sip.osetec.net/ws is reachable" });
         }, 10000);
 
-        testClient.on("telnyx.ready", () => {
-          clearTimeout(timeout);
-          try { testClient.disconnect(); } catch {}
-          resolve({ ok: true, message: `Registered successfully as ${sipUsername}` });
-        });
+        try {
+          const testUser = new SimpleUser(server, {
+            aor,
+            userAgentOptions: {
+              authorizationUsername: authUser,
+              authorizationPassword: sipPassword,
+              displayName: sipDisplayName || user.fullName,
+            },
+            delegate: {
+              onRegistered: () => {
+                clearTimeout(timeout);
+                try { testUser.unregister(); testUser.disconnect(); } catch {}
+                resolve({ ok: true, message: `Registered successfully as ${sipUsername}@${SIP_DOMAIN}` });
+              },
+              onServerConnect: () => {
+                // Connected to WSS, now try to register
+              },
+              onServerDisconnect: () => {
+                clearTimeout(timeout);
+                resolve({ ok: false, message: `WebSocket disconnected — wss://${SIP_DOMAIN}/ws may not be available` });
+              },
+            },
+          });
 
-        testClient.on("telnyx.error", (error: any) => {
+          testUser.connect().then(() => testUser.register()).catch((e: any) => {
+            clearTimeout(timeout);
+            resolve({ ok: false, message: `Registration failed: ${e.message}` });
+          });
+        } catch (e: any) {
           clearTimeout(timeout);
-          try { testClient.disconnect(); } catch {}
-          const msg = error?.message || JSON.stringify(error);
-          if (msg.includes("Login Incorrect") || msg.includes("-32001")) {
-            resolve({ ok: false, message: "Login incorrect — check your SIP username and password. Make sure they match your Telnyx SIP Connection credentials." });
-          } else {
-            resolve({ ok: false, message: `Connection error: ${msg}` });
-          }
-        });
-
-        testClient.on("telnyx.socket.error", () => {
-          clearTimeout(timeout);
-          try { testClient.disconnect(); } catch {}
-          resolve({ ok: false, message: "WebSocket connection failed — Telnyx service may be unreachable" });
-        });
-
-        testClient.connect();
+          resolve({ ok: false, message: `Init error: ${e.message}` });
+        }
       });
 
       setSipTestResult(result);
