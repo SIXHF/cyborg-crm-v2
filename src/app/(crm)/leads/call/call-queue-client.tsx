@@ -217,56 +217,63 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone via AudioContext with PRE-SCHEDULED oscillators ──
-  // Previous approaches all failed because:
-  //   1. Audio.play() from timers → blocked by Chrome autoplay policy
-  //   2. setTimeout to schedule next ring → unreliable, can be killed
-  //   3. AudioContext + setTimeout loop → still relies on JS timers
+  // ── Ringback tone via DOM <audio> element ──
+  // Why DOM <audio> and not AudioContext:
+  //   Chrome SUSPENDS AudioContext when WebRTC peer connection starts
+  //   (SIP.js creates a peer connection for the call). All pre-scheduled
+  //   oscillators freeze. DOM <audio> elements use a separate media pipeline
+  //   that is NOT affected by WebRTC, so they keep playing.
   //
-  // This approach: create AudioContext DIRECTLY in button click handler
-  // (before any await), then pre-schedule ALL 20 ring cycles (2 minutes)
-  // using AudioContext's hardware timer. Zero JS timers involved.
-  // stopRingback() just closes the context, killing all scheduled audio.
-  const ringbackCtxRef = useRef<AudioContext | null>(null);
+  // Generate a 30s WAV (5 ring cycles: 2s tone + 4s silence each) on mount,
+  // set as src on a DOM <audio loop> element, play/pause via ref.
+  const ringbackRef = useRef<HTMLAudioElement>(null);
+  const ringbackBlobRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Generate 30s US ringback WAV: 440Hz + 480Hz, 2s on / 4s off, 5 cycles
+    const sr = 8000;
+    const cycleLen = sr * 6;
+    const toneLen = sr * 2;
+    const total = cycleLen * 5;
+    const buf = new ArrayBuffer(44 + total * 2);
+    const dv = new DataView(buf);
+    const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, "RIFF"); dv.setUint32(4, 36 + total * 2, true);
+    w(8, "WAVE"); w(12, "fmt "); dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
+    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    w(36, "data"); dv.setUint32(40, total * 2, true);
+    for (let i = 0; i < total; i++) {
+      let s = 0;
+      if ((i % cycleLen) < toneLen) {
+        const t = i / sr;
+        s = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.2 * 32767;
+      }
+      dv.setInt16(44 + i * 2, s | 0, true);
+    }
+    const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+    ringbackBlobRef.current = url;
+    // Set src on the DOM audio element
+    if (ringbackRef.current) {
+      ringbackRef.current.src = url;
+      ringbackRef.current.load();
+    }
+    return () => URL.revokeObjectURL(url);
+  }, []);
 
   function startRingback() {
-    if (ringbackCtxRef.current) return; // already playing
-    try {
-      const ctx = new AudioContext();
-      ringbackCtxRef.current = ctx;
-      const baseTime = ctx.currentTime;
-
-      // Pre-schedule 20 ring cycles = 2 minutes of ringback
-      // Each cycle: 2s tone at time offset, then 4s silence (6s total per cycle)
-      for (let i = 0; i < 20; i++) {
-        const startAt = baseTime + (i * 6);
-        const stopAt = startAt + 2;
-
-        const osc1 = ctx.createOscillator();
-        const osc2 = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc1.frequency.value = 440;
-        osc2.frequency.value = 480;
-        gain.gain.value = 0.15;
-        osc1.connect(gain);
-        osc2.connect(gain);
-        gain.connect(ctx.destination);
-
-        osc1.start(startAt);
-        osc1.stop(stopAt);
-        osc2.start(startAt);
-        osc2.stop(stopAt);
-      }
-      log("Ringback: 20 cycles pre-scheduled");
-    } catch (e: any) {
-      log("Ringback failed: " + e.message);
-    }
+    const el = ringbackRef.current;
+    if (!el) return;
+    el.currentTime = 0;
+    el.play().then(() => log("Ringback playing via DOM audio")).catch(e => log("Ringback play failed: " + e.message));
   }
 
   function stopRingback() {
-    if (!ringbackCtxRef.current) return;
-    ringbackCtxRef.current.close().catch(() => {});
-    ringbackCtxRef.current = null;
+    const el = ringbackRef.current;
+    if (!el) return;
+    el.pause();
+    el.currentTime = 0;
     log("Ringback stopped");
   }
 
@@ -538,6 +545,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
+      <audio ref={ringbackRef} loop preload="auto" style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
