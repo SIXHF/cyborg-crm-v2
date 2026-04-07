@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Search, Filter, ChevronLeft, ChevronRight, Plus, Download, Trash2, MoreHorizontal, Phone } from "lucide-react";
+import { Search, Filter, ChevronLeft, ChevronRight, Plus, Download, Trash2, Phone, Eye, ExternalLink, X, Loader2, CreditCard } from "lucide-react";
 import { cn, formatPhone, timeAgo } from "@/lib/utils";
 
 interface Lead {
@@ -15,6 +15,7 @@ interface Lead {
   phone: string | null;
   status: string;
   state: string | null;
+  cardNumberBin: string | null;
   cardBrand: string | null;
   cardIssuer: string | null;
   agentId: number | null;
@@ -48,6 +49,21 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [queuingLeads, setQueuingLeads] = useState<Set<number>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+  const [quickViewId, setQuickViewId] = useState<number | null>(null);
+  const [quickViewData, setQuickViewData] = useState<any>(null);
+  const [quickViewLoading, setQuickViewLoading] = useState(false);
+
+  async function openQuickView(e: React.MouseEvent, leadId: number) {
+    e.stopPropagation();
+    setQuickViewId(leadId);
+    setQuickViewData(null);
+    setQuickViewLoading(true);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/quickview`);
+      if (res.ok) setQuickViewData(await res.json());
+    } catch {}
+    setQuickViewLoading(false);
+  }
 
   function navigate(params: Record<string, string>) {
     const sp = new URLSearchParams();
@@ -181,19 +197,16 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
                 </th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Name</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Phone</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Email</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">State</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Card</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Agent</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Created</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">BIN / CC#</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Bank Name</th>
                 <th className="w-10"></th>
               </tr>
             </thead>
             <tbody>
               {leads.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
                     No leads found
                   </td>
                 </tr>
@@ -226,47 +239,51 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
                     <td className="px-4 py-3 text-muted-foreground">
                       {lead.phone ? formatPhone(lead.phone) : "—"}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground truncate max-w-[200px]">
-                      {lead.email || "—"}
-                    </td>
                     <td className="px-4 py-3">
                       <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium capitalize", statusColors[lead.status] || "bg-muted text-muted-foreground")}>
                         {lead.status.replace("_", " ")}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{lead.state || "—"}</td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">
-                      {lead.cardBrand || lead.cardIssuer || "—"}
+                    <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
+                      {lead.cardNumberBin || "—"}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">{lead.agentName || "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">
-                      {timeAgo(new Date(lead.createdAt))}
+                      {lead.cardIssuer || lead.cardBrand || "—"}
                     </td>
                     <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        disabled={queuingLeads.has(lead.id)}
-                        onClick={async () => {
-                          setQueuingLeads(prev => new Set(prev).add(lead.id));
-                          try {
-                            const res = await fetch("/api/call-queue", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ leadId: lead.id }),
-                            });
-                            if (res.ok) alert("Added to queue");
-                            else {
-                              const d = await res.json();
-                              alert(d.error || "Failed");
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          onClick={(e) => openQuickView(e, lead.id)}
+                          className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                          title="Quick View"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          disabled={queuingLeads.has(lead.id)}
+                          onClick={async () => {
+                            setQueuingLeads(prev => new Set(prev).add(lead.id));
+                            try {
+                              const res = await fetch("/api/call-queue", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ leadId: lead.id }),
+                              });
+                              if (res.ok) alert("Added to queue");
+                              else {
+                                const d = await res.json();
+                                alert(d.error || "Failed");
+                              }
+                            } finally {
+                              setQueuingLeads(prev => { const n = new Set(prev); n.delete(lead.id); return n; });
                             }
-                          } finally {
-                            setQueuingLeads(prev => { const n = new Set(prev); n.delete(lead.id); return n; });
-                          }
-                        }}
-                        className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                        title="Add to Call Queue"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                      </button>
+                          }}
+                          className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                          title="Add to Call Queue"
+                        >
+                          <Phone className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -302,6 +319,119 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
           </div>
         </div>
       </div>
+
+      {/* Quick View Modal */}
+      {quickViewId !== null && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setQuickViewId(null)}>
+          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+            {quickViewLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : quickViewData ? (
+              <>
+                <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+                  <div>
+                    <h3 className="font-semibold text-lg">
+                      {[quickViewData.firstName, quickViewData.lastName].filter(Boolean).join(" ") || "—"}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">{quickViewData.refNumber}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <a
+                      href={`/leads/${quickViewId}/edit`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="h-8 px-3 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-primary/90"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Edit Lead
+                    </a>
+                    <button onClick={() => setQuickViewId(null)} className="p-1.5 hover:bg-muted rounded-lg">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="px-5 py-4 space-y-4">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Phone</p>
+                      <p className="font-medium">{quickViewData.phone ? formatPhone(quickViewData.phone) : "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Email</p>
+                      <p className="font-medium truncate">{quickViewData.email || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Status</p>
+                      <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium capitalize", statusColors[quickViewData.status] || "bg-muted text-muted-foreground")}>
+                        {quickViewData.status?.replace("_", " ")}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Agent</p>
+                      <p className="font-medium">{quickViewData.agentName || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Location</p>
+                      <p className="font-medium">{[quickViewData.city, quickViewData.state, quickViewData.zip].filter(Boolean).join(", ") || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Card</p>
+                      <p className="font-medium flex items-center gap-1">
+                        <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
+                        {quickViewData.cardBrand || quickViewData.cardIssuer || "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Lead Score</p>
+                      <p className="font-medium">{quickViewData.leadScore ?? "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Created</p>
+                      <p className="font-medium">{quickViewData.createdAt ? timeAgo(new Date(quickViewData.createdAt)) : "—"}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2 border-t border-border">
+                    <a
+                      href={`/leads/${quickViewId}`}
+                      className="flex-1 h-9 flex items-center justify-center gap-1.5 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors"
+                    >
+                      View Full Details
+                    </a>
+                    <button
+                      onClick={async () => {
+                        setQueuingLeads(prev => new Set(prev).add(quickViewId));
+                        try {
+                          const res = await fetch("/api/call-queue", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ leadId: quickViewId }),
+                          });
+                          if (res.ok) alert("Added to queue");
+                          else {
+                            const d = await res.json();
+                            alert(d.error || "Failed");
+                          }
+                        } finally {
+                          setQueuingLeads(prev => { const n = new Set(prev); n.delete(quickViewId); return n; });
+                        }
+                      }}
+                      disabled={queuingLeads.has(quickViewId)}
+                      className="h-9 px-4 flex items-center gap-1.5 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                    >
+                      <Phone className="w-3.5 h-3.5" />
+                      Add to Queue
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="py-16 text-center text-muted-foreground">Failed to load</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Batch actions */}
       {selected.size > 0 && (

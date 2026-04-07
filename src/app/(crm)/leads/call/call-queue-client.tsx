@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Phone, PhoneOff, PhoneCall, Mic, MicOff,
   X, ChevronRight, Trash2, Clock, Volume2, Wifi, WifiOff,
-  Hash,
+  Hash, ExternalLink,
 } from "lucide-react";
 import { cn, formatPhone } from "@/lib/utils";
 
@@ -208,54 +208,52 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // Ringback tone: US pattern 440Hz + 480Hz, 2s on / 4s off
+  // Uses a looping approach with explicit start/stop for browser compatibility
   useEffect(() => {
     if (callState !== "ringing") return;
+    let cancelled = false;
     let audioCtx: AudioContext | null = null;
-    let osc1: OscillatorNode | null = null;
-    let osc2: OscillatorNode | null = null;
-    let interval: NodeJS.Timeout | null = null;
-    let stopped = false;
+    let timeoutId: NodeJS.Timeout | null = null;
 
-    try {
-      audioCtx = new AudioContext();
-      // Resume context (required by browser autoplay policy)
-      audioCtx.resume();
-      osc1 = audioCtx.createOscillator();
-      osc2 = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc1.frequency.value = 440;
-      osc2.frequency.value = 480;
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(audioCtx.destination);
-      gain.gain.value = 0;
-      osc1.start();
-      osc2.start();
+    async function playRingback() {
+      try {
+        audioCtx = new AudioContext();
+        await audioCtx.resume(); // Required for browser autoplay policy
 
-      // US ringback: 2s on, 4s off (6s cycle)
-      // Schedule multiple cycles ahead to avoid gaps
-      function scheduleRingCycles() {
-        if (!audioCtx || stopped) return;
-        const now = audioCtx.currentTime;
-        // Schedule 3 full cycles ahead (18s of audio)
-        for (let i = 0; i < 3; i++) {
-          const cycleStart = now + (i * 6);
-          gain.gain.setValueAtTime(0.15, cycleStart);         // ON at cycle start
-          gain.gain.setValueAtTime(0, cycleStart + 2);        // OFF after 2s
+        while (!cancelled) {
+          // Create fresh oscillators each cycle (oscillators can only be started once)
+          const osc1 = audioCtx.createOscillator();
+          const osc2 = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc1.frequency.value = 440;
+          osc2.frequency.value = 480;
+          osc1.connect(gain);
+          osc2.connect(gain);
+          gain.connect(audioCtx.destination);
+          gain.gain.value = 0.15;
+
+          // Play for 2 seconds
+          osc1.start();
+          osc2.start();
+          await new Promise<void>(r => { timeoutId = setTimeout(r, 2000); });
+          osc1.stop();
+          osc2.stop();
+
+          if (cancelled) break;
+
+          // Silence for 4 seconds
+          await new Promise<void>(r => { timeoutId = setTimeout(r, 4000); });
         }
+      } catch (e) {
+        console.error("Ringback tone error:", e);
       }
-      scheduleRingCycles();
-      // Re-schedule every 15s to keep the pattern going
-      interval = setInterval(scheduleRingCycles, 15000);
-    } catch (e) {
-      console.error("Ringback tone error:", e);
     }
 
+    playRingback();
+
     return () => {
-      stopped = true;
-      if (interval) clearInterval(interval);
-      try { osc1?.stop(); } catch {}
-      try { osc2?.stop(); } catch {}
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
       try { audioCtx?.close(); } catch {}
     };
   }, [callState]);
@@ -684,7 +682,18 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             {/* Lead Detail Panel — visible during ringing/active */}
             {currentLead && (callState === "ringing" || callState === "active") && (
               <div className="w-full bg-card border border-border rounded-xl p-4 text-left space-y-3 text-sm">
-                <h4 className="font-semibold text-base">Lead Details</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-base">Lead Details</h4>
+                  <a
+                    href={`/leads/${currentLead.id}/edit`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="h-8 px-3 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-primary/90"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Edit Lead
+                  </a>
+                </div>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-1">
                   <div className="flex justify-between py-1 border-b border-border/30">
                     <span className="text-muted-foreground">Name</span>

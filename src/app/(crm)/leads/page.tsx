@@ -107,6 +107,7 @@ export default async function LeadsPage({ searchParams }: Props) {
       phone: leads.phone,
       status: leads.status,
       state: leads.state,
+      cardNumberBin: leads.cardNumberBin,
       cardBrand: leads.cardBrand,
       cardIssuer: leads.cardIssuer,
       agentId: leads.agentId,
