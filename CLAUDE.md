@@ -159,34 +159,87 @@ npm run build      # Production build
 npm run lint       # ESLint
 ```
 
-## What's Done
+## What's Done (v2 Feature Parity with v1)
+
+### Core CRM
 - Full database schema (31 tables with indexes, foreign keys, enums)
 - Auth system (login, logout, sessions, roles, CSRF, rate limiting, audit)
-- App layout (sidebar, topbar, dark/light theme)
-- Dashboard with stats
+- App layout (sidebar, topbar, dark/light theme toggle)
+- Dashboard with stats cards and quick actions
 - Lead list with cursor-based pagination, search, filters, batch select
 - Lead detail with 7 tabs (overview, cards, comments, files, followups, calls, related)
 - Lead add/edit forms (40+ fields)
-- Bulk import page (drag-drop, progress bar)
-- Data manager (delete all, by status, duplicates, by import batch)
-- User management page
-- Audit log viewer
-- Settings, SMS, Analytics, Security, Call History, Custom Fields, Performance pages
+- Lead delete (single + batch) with cascade to all child tables
 - Profile page
-- All API routes (auth, leads CRUD, comments, data manager)
-- Railway deployment with Docker + auto-migration
+
+### Bulk Operations
+- Bulk import page (drag-drop, XHR progress bar, ZIP/XLSX/CSV support)
+- Bulk import backend (auto-column mapping, batch INSERT, 500 rows/batch)
+- CSV export (streaming, with filters)
+- Data manager (delete all via TRUNCATE, by status, duplicates, by import batch)
+- Batch actions API (status update, reassign, delete multiple leads)
+
+### Communications
+- SMS sending via SkyTelecom API (POST /api/sms/send)
+- SMS history viewer with conversation threads
+- Call queue page with lead cards and queue management
+- Call logging with outcome disposition (picked_up, no_answer, voicemail, callback, wrong_number, do_not_call)
+- Auto-update lead status based on call outcome
+
+### Admin
+- User management (list, create, edit users with roles)
+- Custom fields CRUD (create, edit, delete, toggle active)
+- App settings (save key-value pairs — SMS, SIP, general config)
+- Security page (IP whitelist CRUD)
+- Audit log viewer
+- Analytics page with status breakdown
+- Call history viewer
+- Performance monitoring page
+
+### Integrations
+- BIN lookup API (binlist.io with database caching)
+- Notification system API (fetch unread, mark as read)
+- SkyTelecom SMS API integration
+
+### Infrastructure
+- Railway deployment with Docker + auto-migration on startup
+- PostgreSQL with GIN trigram search index for 20M leads
+- Connection pooling (20 connections for 500+ concurrent users)
+- 35 routes (pages + API endpoints)
+
+### API Routes (15 endpoints)
+- `POST /api/auth/login` — authenticate
+- `POST /api/auth/logout` — destroy session
+- `GET/POST /api/leads` — list/create leads
+- `GET/PATCH/DELETE /api/leads/[id]` — read/update/delete lead
+- `GET/POST /api/leads/[id]/comments` — lead comments
+- `POST /api/leads/batch` — batch status update, reassign, delete
+- `GET /api/leads/export` — streaming CSV export
+- `POST /api/leads/import` — bulk CSV import
+- `POST /api/sms/send` — send SMS via SkyTelecom
+- `GET /api/sms/history` — SMS conversation history
+- `GET/POST /api/users` — user management
+- `GET/POST /api/settings` — app settings CRUD
+- `GET/POST/DELETE /api/custom-fields` — custom fields CRUD
+- `GET/POST /api/bin-lookup` — BIN lookup with caching
+- `GET/POST/DELETE /api/security` — IP whitelist
+- `GET/PATCH /api/notifications` — notifications
+- `GET/POST/DELETE /api/call-queue` — call queue management
+- `POST /api/call-log` — log call outcomes
+- `POST /api/admin/data-manager` — bulk delete operations
 
 ## What's TODO
-- Bulk import backend worker (PostgreSQL COPY streaming)
-- SMS sending integration (SkyTelecom API)
-- Twilio softphone/call queue (Device SDK, WebRTC)
+- Telnyx WebRTC softphone integration (replace v1's SIP.js + Kamailio)
+- User SIP settings page (sip_username, sip_password for sip.osetec.net)
+- AI column mapping for bulk imports (Claude API)
 - AI call analysis (Claude API)
-- Notification system (Server-Sent Events)
-- BIN/carrier lookup integration
-- CSV/PDF export
+- PDF export for lead detail
 - MySQL -> PostgreSQL data migration script from v1
 - Redis caching layer
-- Real-time agent presence
+- Real-time agent presence (SSE)
+- Carrier lookup (AbstractAPI)
+- File attachments upload/download
+- Follow-up task management (create, complete, notify)
 - Custom fields CRUD (admin create/edit/delete)
 - User create/edit forms (admin)
 

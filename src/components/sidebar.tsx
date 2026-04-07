@@ -23,6 +23,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/leads/new", label: "Add New Lead", icon: UserPlus },
+  { href: "/leads/call", label: "Call Queue", icon: Phone },
 ];
 
 const adminItems = [
