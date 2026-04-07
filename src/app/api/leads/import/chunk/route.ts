@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUser, audit } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { leads, leadCards, importJobs } from "@/lib/db/schema";
+import { leads, leadCards, importJobs, binCache } from "@/lib/db/schema";
 import { generateRef } from "@/lib/utils";
 import { readFile, unlink } from "fs/promises";
 import { sql } from "drizzle-orm";
@@ -162,6 +162,11 @@ export async function POST(req: NextRequest) {
     let chunkFailed = 0;
     const failedRows: { row: number; reason: string }[] = [];
     const batchSize = 500;
+    // Load BIN cache for fast lookups during import (no external API calls)
+    const binCacheRows = await db.select({ bin6: binCache.bin6, brand: binCache.brand, type: binCache.type, issuer: binCache.issuer, country: binCache.country })
+      .from(binCache).limit(100000);
+    const binLookup = new Map(binCacheRows.map(r => [r.bin6, r]));
+
     let rowBatch: any[] = [];
     let cardBatch: { refNumber: string; data: Record<string, string> }[] = [];
 
@@ -218,6 +223,18 @@ export async function POST(req: NextRequest) {
       let cardBrand = data.cardBrand || "";
       const ccNumberClean = data.ccNumber ? data.ccNumber.replace(/\D/g, "") : "";
       const bin = data.cardNumberBin || (ccNumberClean ? ccNumberClean.slice(0, 6) : "");
+      let cardIssuer = data.cardIssuer || data.ccBank || "";
+      let cardType = data.cardType || "";
+      // Check BIN cache first (local DB lookup, no API)
+      if (bin && bin.length >= 6) {
+        const cached = binLookup.get(bin.slice(0, 6));
+        if (cached) {
+          if (!cardBrand && cached.brand) cardBrand = cached.brand;
+          if (!cardIssuer && cached.issuer) cardIssuer = cached.issuer;
+          if (!cardType && cached.type) cardType = cached.type;
+        }
+      }
+      // Fallback: pattern match
       if (bin && !cardBrand) {
         if (bin[0] === "4") cardBrand = "Visa";
         else if (bin[0] === "5" && bin[1] >= "1" && bin[1] <= "5") cardBrand = "Mastercard";
@@ -248,7 +265,7 @@ export async function POST(req: NextRequest) {
         cardNumberBin: bin?.slice(0, 8) || null,
         cardNumberMasked: data.cardNumberMasked || (ccNumberClean.length >= 13 ? `****${ccNumberClean.slice(-4)}` : null),
         cardBrand: cardBrand || null,
-        cardIssuer: data.cardIssuer || data.ccBank || null,
+        cardIssuer: cardIssuer || null,
         businessName: data.businessName || null,
         businessEin: data.businessEin || null,
         mortgageBank: data.mortgageBank || null,
@@ -271,8 +288,8 @@ export async function POST(req: NextRequest) {
             cvc: data.ccCvc || "",
             expDate: data.ccExp || "",
             noc: data.ccNoc || "",
-            bank: data.ccBank || data.cardIssuer || "",
-            cardType: data.cardType || cardBrand || "",
+            bank: cardIssuer || "",
+            cardType: cardType || cardBrand || "",
             creditLimit: data.ccLimit?.replace(/[^0-9.]/g, "") || "",
           },
         });
