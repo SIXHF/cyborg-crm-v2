@@ -218,59 +218,64 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone — short 2s WAV replayed on interval ──
-  // Blob URL audio.loop is unreliable in Chrome when WebRTC media streams are active.
-  // Instead: generate a short 2s tone, replay it every 6s via setInterval.
-  const ringbackUrlRef = useRef<string | null>(null);
-  const ringbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // ── Ringback tone via AudioContext ──
+  // Why AudioContext and not Audio element:
+  //   - new Audio().play() from setInterval is BLOCKED by Chrome autoplay policy
+  //     (only the first play works because it's in the user gesture chain)
+  //   - AudioContext, once created during a user gesture, allows unlimited
+  //     scheduling of oscillators without further gestures
+  //
+  // Pattern: 2s tone (440+480Hz) → 4s silence → repeat
+  const ringbackCtxRef = useRef<AudioContext | null>(null);
   const ringbackActiveRef = useRef(false);
+  const ringbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    // Generate a SHORT 2-second US ringback tone WAV (440Hz + 480Hz)
-    const sampleRate = 8000;
-    const totalSamples = sampleRate * 2; // exactly 2 seconds
-    const buf = new ArrayBuffer(44 + totalSamples * 2);
-    const dv = new DataView(buf);
-    const ws = (o: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
-    ws(0, "RIFF"); dv.setUint32(4, 36 + totalSamples * 2, true);
-    ws(8, "WAVE"); ws(12, "fmt "); dv.setUint32(16, 16, true);
-    dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
-    dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * 2, true);
-    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
-    ws(36, "data"); dv.setUint32(40, totalSamples * 2, true);
-    for (let i = 0; i < totalSamples; i++) {
-      const t = i / sampleRate;
-      const s = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.2 * 32767;
-      dv.setInt16(44 + i * 2, s | 0, true);
-    }
-    ringbackUrlRef.current = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
-    return () => { if (ringbackUrlRef.current) URL.revokeObjectURL(ringbackUrlRef.current); };
-  }, []);
-
-  // Play one 2s ring burst
-  function playRingBurst() {
-    if (!ringbackUrlRef.current || !ringbackActiveRef.current) return;
-    // Create a fresh Audio element each burst — avoids stale element issues
-    const a = new Audio(ringbackUrlRef.current);
-    a.volume = 0.6;
-    a.play().catch(() => {});
-  }
-
-  // Start repeating ring: play immediately, then every 6 seconds (2s tone + 4s silence)
   function startRingback() {
-    if (ringbackActiveRef.current) return; // already ringing
+    if (ringbackActiveRef.current) return;
     ringbackActiveRef.current = true;
     log("Ringback started");
-    playRingBurst(); // first ring immediately
-    ringbackIntervalRef.current = setInterval(playRingBurst, 6000); // repeat every 6s
+
+    // Create AudioContext — MUST happen in user gesture chain (Call button click)
+    const ctx = new AudioContext();
+    ctx.resume(); // ensure it's running
+    ringbackCtxRef.current = ctx;
+
+    // Schedule ring cycles: play 2s tone, wait 4s, repeat
+    function scheduleRing() {
+      if (!ringbackActiveRef.current || ctx.state === "closed") return;
+      const now = ctx.currentTime;
+      // Create oscillators for this burst
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc1.frequency.value = 440;
+      osc2.frequency.value = 480;
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.value = 0.15;
+      // Play for exactly 2 seconds
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 2);
+      osc2.stop(now + 2);
+      // Schedule next ring in 6 seconds (2s tone + 4s silence)
+      ringbackTimerRef.current = setTimeout(scheduleRing, 6000);
+    }
+
+    scheduleRing();
   }
 
   function stopRingback() {
     if (!ringbackActiveRef.current) return;
     ringbackActiveRef.current = false;
-    if (ringbackIntervalRef.current) {
-      clearInterval(ringbackIntervalRef.current);
-      ringbackIntervalRef.current = null;
+    if (ringbackTimerRef.current) {
+      clearTimeout(ringbackTimerRef.current);
+      ringbackTimerRef.current = null;
+    }
+    if (ringbackCtxRef.current) {
+      ringbackCtxRef.current.close().catch(() => {});
+      ringbackCtxRef.current = null;
     }
     log("Ringback stopped");
   }
