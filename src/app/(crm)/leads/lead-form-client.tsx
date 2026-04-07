@@ -171,6 +171,61 @@ export function LeadFormClient({ agents, customFields, currentUser, initialData 
         </div>
       </div>
 
+      {/* Custom Fields */}
+      {customFields.length > 0 && (
+        <div className="bg-card border border-border rounded-xl p-5">
+          <h3 className="font-semibold mb-4">Custom Fields</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {customFields.map((cf: any) => {
+              const cfKey = `cf_${cf.fieldKey}`;
+              const cfValue = (form as any)[cfKey] || initialData?.customFields?.[cf.fieldKey] || "";
+              return (
+                <div key={cf.id}>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">
+                    {cf.label} {cf.isRequired && <span className="text-red-500">*</span>}
+                  </label>
+                  {cf.fieldType === "select" ? (
+                    <select
+                      value={cfValue}
+                      onChange={(e) => update(cfKey, e.target.value)}
+                      className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                    >
+                      <option value="">Select...</option>
+                      {(cf.options || []).map((opt: string) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  ) : cf.fieldType === "textarea" ? (
+                    <textarea
+                      value={cfValue}
+                      onChange={(e) => update(cfKey, e.target.value)}
+                      className="w-full h-20 px-3 py-2 bg-muted border border-border rounded-lg text-sm resize-none"
+                    />
+                  ) : cf.fieldType === "checkbox" ? (
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={cfValue === "1" || cfValue === true}
+                        onChange={(e) => update(cfKey, e.target.checked ? "1" : "0")}
+                        className="rounded"
+                      />
+                      <span className="text-sm">{cf.label}</span>
+                    </label>
+                  ) : (
+                    <input
+                      type={cf.fieldType === "number" ? "number" : cf.fieldType === "date" ? "date" : "text"}
+                      value={cfValue}
+                      onChange={(e) => update(cfKey, e.target.value)}
+                      className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Assignment */}
       <div className="bg-card border border-border rounded-xl p-5">
         <h3 className="font-semibold mb-4">Assignment & Status</h3>

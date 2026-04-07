@@ -185,6 +185,7 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Card</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Agent</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Created</th>
+                <th className="w-10"></th>
               </tr>
             </thead>
             <tbody>
@@ -238,6 +239,26 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
                     <td className="px-4 py-3 text-muted-foreground text-xs">{lead.agentName || "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">
                       {timeAgo(new Date(lead.createdAt))}
+                    </td>
+                    <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={async () => {
+                          const res = await fetch("/api/call-queue", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ leadId: lead.id }),
+                          });
+                          if (res.ok) alert("Added to queue");
+                          else {
+                            const d = await res.json();
+                            alert(d.error || "Failed");
+                          }
+                        }}
+                        className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                        title="Add to Call Queue"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                      </button>
                     </td>
                   </tr>
                 ))
