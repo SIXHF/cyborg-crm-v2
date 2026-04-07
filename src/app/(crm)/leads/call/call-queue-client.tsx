@@ -443,16 +443,20 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
 
     const newQueue = queue.filter((_, i) => i !== currentIdx);
     setQueue(newQueue);
-    if (currentIdx >= newQueue.length && newQueue.length > 0) {
-      setCurrentIdx(newQueue.length - 1);
-    }
+    const newIdx = currentIdx >= newQueue.length ? Math.max(0, newQueue.length - 1) : currentIdx;
+    setCurrentIdx(newIdx);
 
     // Auto-dialer: start next call after delay
+    // IMPORTANT: pass the next lead's phone explicitly — React state updates
+    // haven't applied yet, so currentLead would still reference the OLD lead
     if (autoDialEnabled && !autoDialPaused && newQueue.length > 0) {
-      log(`Auto-dial: next call in ${autoDialDelay}s...`);
-      autoDialTimerRef.current = setTimeout(() => {
-        if (!autoDialPaused) startCall();
-      }, autoDialDelay * 1000);
+      const nextLead = newQueue[newIdx];
+      if (nextLead?.phone) {
+        log(`Auto-dial: calling ${nextLead.firstName} ${nextLead.lastName} in ${autoDialDelay}s...`);
+        autoDialTimerRef.current = setTimeout(() => {
+          if (!autoDialPaused) startCall(nextLead.phone!);
+        }, autoDialDelay * 1000);
+      }
     }
   }
 
