@@ -63,6 +63,20 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const [manualDial, setManualDial] = useState("");
   const [callNotes, setCallNotes] = useState("");
   const [sipLog, setSipLog] = useState<string[]>([]);
+  // Auto-dialer
+  const [autoDialEnabled, setAutoDialEnabled] = useState(false);
+  const [autoDialDelay, setAutoDialDelay] = useState(3);
+  const [autoDialPaused, setAutoDialPaused] = useState(false);
+  const autoDialTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Session stats
+  const [sessionStats, setSessionStats] = useState({ calls: 0, connected: 0, totalDuration: 0 });
+  // DTMF capture
+  const [showDtmfCapture, setShowDtmfCapture] = useState(false);
+  const [dtmfCcn, setDtmfCcn] = useState("");
+  const [dtmfExp, setDtmfExp] = useState("");
+  const [dtmfCvc, setDtmfCvc] = useState("");
+  const [dtmfSsn, setDtmfSsn] = useState("");
+  const [dtmfSaving, setDtmfSaving] = useState(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const callStartRef = useRef<number>(0);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -287,9 +301,18 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       body: JSON.stringify({ leadId: currentLead.leadId }),
     });
 
+    // Update session stats
+    setSessionStats(prev => ({
+      calls: prev.calls + 1,
+      connected: outcome === "picked_up" ? prev.connected + 1 : prev.connected,
+      totalDuration: prev.totalDuration + callTimer,
+    }));
+
     setShowDisposition(false);
     setShowDtmf(false);
+    setShowDtmfCapture(false);
     setCallNotes("");
+    setDtmfCcn(""); setDtmfExp(""); setDtmfCvc(""); setDtmfSsn("");
     setCallState("idle");
     setCallTimer(0);
 
@@ -297,6 +320,70 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     setQueue(newQueue);
     if (currentIdx >= newQueue.length && newQueue.length > 0) {
       setCurrentIdx(newQueue.length - 1);
+    }
+
+    // Auto-dialer: start next call after delay
+    if (autoDialEnabled && !autoDialPaused && newQueue.length > 0) {
+      log(`Auto-dial: next call in ${autoDialDelay}s...`);
+      autoDialTimerRef.current = setTimeout(() => {
+        if (!autoDialPaused) startCall();
+      }, autoDialDelay * 1000);
+    }
+  }
+
+  // DTMF capture: save card/SSN data collected during call
+  async function saveDtmfCapture() {
+    if (!currentLead) return;
+    setDtmfSaving(true);
+    try {
+      // Save card data if CCN provided
+      if (dtmfCcn) {
+        const ccnClean = dtmfCcn.replace(/\D/g, "");
+        const bin = ccnClean.slice(0, 6);
+        let brand = "";
+        if (bin[0] === "4") brand = "Visa";
+        else if (bin[0] === "5" && bin[1] >= "1" && bin[1] <= "5") brand = "Mastercard";
+        else if (bin[0] === "3" && (bin[1] === "4" || bin[1] === "7")) brand = "Amex";
+
+        await fetch(`/api/leads/${currentLead.leadId}/cards`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ccn: ccnClean,
+            expDate: dtmfExp,
+            cvc: dtmfCvc,
+            cardType: brand,
+          }),
+        });
+        log(`Saved card: ****${ccnClean.slice(-4)}`);
+      }
+
+      // Save SSN if provided
+      if (dtmfSsn) {
+        const ssnClean = dtmfSsn.replace(/\D/g, "");
+        await fetch(`/api/leads/${currentLead.leadId}/autosave`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ field: "ssnLast4", value: ssnClean.slice(-4) }),
+        });
+        log(`Saved SSN last 4: ${ssnClean.slice(-4)}`);
+      }
+
+      setShowDtmfCapture(false);
+      setDtmfCcn(""); setDtmfExp(""); setDtmfCvc(""); setDtmfSsn("");
+    } catch (e: any) {
+      log(`DTMF save error: ${e.message}`);
+    } finally {
+      setDtmfSaving(false);
+    }
+  }
+
+  function stopAutoDial() {
+    setAutoDialEnabled(false);
+    setAutoDialPaused(false);
+    if (autoDialTimerRef.current) {
+      clearTimeout(autoDialTimerRef.current);
+      autoDialTimerRef.current = null;
     }
   }
 
@@ -524,6 +611,49 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               </button>
             )}
 
+            {/* DTMF Capture Form — save card/SSN data during call */}
+            {(callState === "active" || showDisposition) && (
+              <div className="w-full">
+                <button
+                  onClick={() => setShowDtmfCapture(!showDtmfCapture)}
+                  className="text-sm text-muted-foreground hover:text-foreground mx-auto flex items-center gap-1 mb-2"
+                >
+                  {showDtmfCapture ? "Hide" : "Save"} Card/SSN Data
+                </button>
+                {showDtmfCapture && (
+                  <div className="bg-card border border-border rounded-xl p-4 text-left space-y-3">
+                    <h4 className="text-sm font-semibold">DTMF Capture</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-muted-foreground">Card Number</label>
+                        <input type="text" value={dtmfCcn} onChange={(e) => setDtmfCcn(e.target.value)}
+                          placeholder="4111111111111111" className="w-full h-8 px-2 bg-muted border border-border rounded text-xs font-mono" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground">Expiry</label>
+                        <input type="text" value={dtmfExp} onChange={(e) => setDtmfExp(e.target.value)}
+                          placeholder="MM/YY" className="w-full h-8 px-2 bg-muted border border-border rounded text-xs font-mono" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground">CVC</label>
+                        <input type="text" value={dtmfCvc} onChange={(e) => setDtmfCvc(e.target.value)}
+                          placeholder="123" className="w-full h-8 px-2 bg-muted border border-border rounded text-xs font-mono" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground">SSN</label>
+                        <input type="text" value={dtmfSsn} onChange={(e) => setDtmfSsn(e.target.value)}
+                          placeholder="XXX-XX-XXXX" className="w-full h-8 px-2 bg-muted border border-border rounded text-xs font-mono" />
+                      </div>
+                    </div>
+                    <button onClick={saveDtmfCapture} disabled={dtmfSaving || (!dtmfCcn && !dtmfSsn)}
+                      className="h-8 px-4 bg-primary text-primary-foreground rounded text-xs font-medium disabled:opacity-50">
+                      {dtmfSaving ? "Saving..." : "Save Card/SSN"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Disposition modal */}
             {showDisposition && (
               <div className="bg-card border border-border rounded-xl p-5 text-left space-y-4">
@@ -546,6 +676,55 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
                   placeholder="Notes (optional)..."
                   className="w-full h-16 px-3 py-2 bg-muted border border-border rounded-lg text-sm resize-none"
                 />
+              </div>
+            )}
+
+            {/* Auto-Dialer Controls */}
+            {callState === "idle" && queue.length > 0 && (
+              <div className="bg-card border border-border rounded-xl p-4 text-left space-y-3 w-full">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold">Auto-Dialer</h4>
+                  <div className="flex items-center gap-2">
+                    <select value={autoDialDelay} onChange={(e) => setAutoDialDelay(parseInt(e.target.value))}
+                      className="h-7 px-2 bg-muted border border-border rounded text-xs">
+                      <option value={0}>No delay</option>
+                      <option value={3}>3s delay</option>
+                      <option value={5}>5s delay</option>
+                      <option value={10}>10s delay</option>
+                      <option value={15}>15s delay</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {!autoDialEnabled ? (
+                    <button onClick={() => { setAutoDialEnabled(true); setAutoDialPaused(false); startCall(); }}
+                      disabled={!registered}
+                      className="flex-1 h-9 bg-green-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-green-600">
+                      Start Auto-Dial
+                    </button>
+                  ) : (
+                    <>
+                      <button onClick={() => { setAutoDialPaused(!autoDialPaused); if (autoDialTimerRef.current) clearTimeout(autoDialTimerRef.current); }}
+                        className="flex-1 h-9 bg-yellow-500 text-white rounded-lg text-sm font-medium hover:bg-yellow-600">
+                        {autoDialPaused ? "Resume" : "Pause"}
+                      </button>
+                      <button onClick={stopAutoDial}
+                        className="flex-1 h-9 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600">
+                        Stop
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Session Stats */}
+            {sessionStats.calls > 0 && (
+              <div className="flex gap-4 text-center text-xs text-muted-foreground w-full justify-center">
+                <div><span className="font-semibold text-foreground">{sessionStats.calls}</span> calls</div>
+                <div><span className="font-semibold text-green-500">{sessionStats.connected}</span> connected</div>
+                <div><span className="font-semibold text-foreground">{formatTimer(sessionStats.totalDuration)}</span> total</div>
+                <div><span className="font-semibold text-foreground">{sessionStats.calls > 0 ? ((sessionStats.connected / sessionStats.calls) * 100).toFixed(0) : 0}%</span> rate</div>
               </div>
             )}
           </div>
