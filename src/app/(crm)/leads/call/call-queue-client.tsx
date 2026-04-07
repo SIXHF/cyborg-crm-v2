@@ -144,9 +144,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
           },
           delegate: {
             onCallCreated: () => {
-              log("Call created — starting ringback");
+              log("Call created — INVITE sent");
               setCallState("ringing");
-              startRingback();
             },
             onCallAnswered: () => {
               log("Call answered");
@@ -218,65 +217,56 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone via AudioContext ──
-  // Why AudioContext and not Audio element:
-  //   - new Audio().play() from setInterval is BLOCKED by Chrome autoplay policy
-  //     (only the first play works because it's in the user gesture chain)
-  //   - AudioContext, once created during a user gesture, allows unlimited
-  //     scheduling of oscillators without further gestures
+  // ── Ringback tone via AudioContext with PRE-SCHEDULED oscillators ──
+  // Previous approaches all failed because:
+  //   1. Audio.play() from timers → blocked by Chrome autoplay policy
+  //   2. setTimeout to schedule next ring → unreliable, can be killed
+  //   3. AudioContext + setTimeout loop → still relies on JS timers
   //
-  // Pattern: 2s tone (440+480Hz) → 4s silence → repeat
+  // This approach: create AudioContext DIRECTLY in button click handler
+  // (before any await), then pre-schedule ALL 20 ring cycles (2 minutes)
+  // using AudioContext's hardware timer. Zero JS timers involved.
+  // stopRingback() just closes the context, killing all scheduled audio.
   const ringbackCtxRef = useRef<AudioContext | null>(null);
-  const ringbackActiveRef = useRef(false);
-  const ringbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   function startRingback() {
-    if (ringbackActiveRef.current) return;
-    ringbackActiveRef.current = true;
-    log("Ringback started");
+    if (ringbackCtxRef.current) return; // already playing
+    try {
+      const ctx = new AudioContext();
+      ringbackCtxRef.current = ctx;
+      const baseTime = ctx.currentTime;
 
-    // Create AudioContext — MUST happen in user gesture chain (Call button click)
-    const ctx = new AudioContext();
-    ctx.resume(); // ensure it's running
-    ringbackCtxRef.current = ctx;
+      // Pre-schedule 20 ring cycles = 2 minutes of ringback
+      // Each cycle: 2s tone at time offset, then 4s silence (6s total per cycle)
+      for (let i = 0; i < 20; i++) {
+        const startAt = baseTime + (i * 6);
+        const stopAt = startAt + 2;
 
-    // Schedule ring cycles: play 2s tone, wait 4s, repeat
-    function scheduleRing() {
-      if (!ringbackActiveRef.current || ctx.state === "closed") return;
-      const now = ctx.currentTime;
-      // Create oscillators for this burst
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc1.frequency.value = 440;
-      osc2.frequency.value = 480;
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(ctx.destination);
-      gain.gain.value = 0.15;
-      // Play for exactly 2 seconds
-      osc1.start(now);
-      osc2.start(now);
-      osc1.stop(now + 2);
-      osc2.stop(now + 2);
-      // Schedule next ring in 6 seconds (2s tone + 4s silence)
-      ringbackTimerRef.current = setTimeout(scheduleRing, 6000);
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc1.frequency.value = 440;
+        osc2.frequency.value = 480;
+        gain.gain.value = 0.15;
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc1.start(startAt);
+        osc1.stop(stopAt);
+        osc2.start(startAt);
+        osc2.stop(stopAt);
+      }
+      log("Ringback: 20 cycles pre-scheduled");
+    } catch (e: any) {
+      log("Ringback failed: " + e.message);
     }
-
-    scheduleRing();
   }
 
   function stopRingback() {
-    if (!ringbackActiveRef.current) return;
-    ringbackActiveRef.current = false;
-    if (ringbackTimerRef.current) {
-      clearTimeout(ringbackTimerRef.current);
-      ringbackTimerRef.current = null;
-    }
-    if (ringbackCtxRef.current) {
-      ringbackCtxRef.current.close().catch(() => {});
-      ringbackCtxRef.current = null;
-    }
+    if (!ringbackCtxRef.current) return;
+    ringbackCtxRef.current.close().catch(() => {});
+    ringbackCtxRef.current = null;
     log("Ringback stopped");
   }
 
@@ -313,6 +303,10 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     const target = `sip:${dialNum}@${SIP_DOMAIN}`;
     log(`Dialing ${target}...`);
     setCallState("connecting");
+
+    // Start ringback HERE — BEFORE any await — so AudioContext is created
+    // directly in the user's click gesture (Chrome requires this)
+    startRingback();
 
     try {
       const simpleUser = telnyxClientRef.current;
