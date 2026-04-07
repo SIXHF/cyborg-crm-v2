@@ -34,6 +34,8 @@ export const users = pgTable('users', {
   allowedIps: text('allowed_ips'),
   sipUsername: varchar('sip_username', { length: 100 }),
   sipPassword: varchar('sip_password', { length: 100 }),
+  sipAuthUser: varchar('sip_auth_user', { length: 100 }),
+  sipDisplayName: varchar('sip_display_name', { length: 120 }),
   forceLogoutAt: timestamp('force_logout_at', { withTimezone: true }),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   lastLoginIp: varchar('last_login_ip', { length: 45 }),

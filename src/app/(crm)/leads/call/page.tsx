@@ -35,7 +35,12 @@ export default async function CallQueuePage() {
       <Topbar title="Call Queue" user={user} />
       <CallQueueClient
         initialQueue={queue}
-        sipUsername={user.sipUsername || ""}
+        sipCredentials={{
+          username: user.sipUsername || "",
+          password: user.sipPassword || "",
+          authUser: user.sipAuthUser || user.sipUsername || "",
+          displayName: user.sipDisplayName || user.fullName || user.username,
+        }}
         currentUser={user}
       />
     </>

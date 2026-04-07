@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Phone, PhoneOff, PhoneCall, Mic, MicOff, Pause, Play,
-  X, ChevronRight, Trash2, Clock, User, Volume2,
+  Phone, PhoneOff, PhoneCall, Mic, MicOff,
+  X, ChevronRight, Trash2, Clock, Volume2, Wifi, WifiOff,
+  Hash,
 } from "lucide-react";
 import { cn, formatPhone } from "@/lib/utils";
 
@@ -22,11 +23,20 @@ interface QueueItem {
   cardIssuer: string | null;
 }
 
+interface SipCredentials {
+  username: string;
+  password: string;
+  authUser: string;
+  displayName: string;
+}
+
 interface Props {
   initialQueue: QueueItem[];
-  sipUsername: string;
+  sipCredentials: SipCredentials;
   currentUser: { id: number; fullName: string };
 }
+
+const SIP_DOMAIN = "sip.osetec.net";
 
 const outcomes = [
   { value: "picked_up", label: "Picked Up", color: "bg-green-500" },
@@ -37,20 +47,134 @@ const outcomes = [
   { value: "do_not_call", label: "Do Not Call", color: "bg-red-500" },
 ];
 
-export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Props) {
+const dtmfTones = ["1","2","3","4","5","6","7","8","9","*","0","#"];
+
+export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: Props) {
   const router = useRouter();
   const [queue, setQueue] = useState(initialQueue);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [callState, setCallState] = useState<"idle" | "connecting" | "ringing" | "active" | "ended">("idle");
+  const [registered, setRegistered] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const [muted, setMuted] = useState(false);
   const [callTimer, setCallTimer] = useState(0);
   const [showDisposition, setShowDisposition] = useState(false);
+  const [showDtmf, setShowDtmf] = useState(false);
+  const [manualDial, setManualDial] = useState("");
   const [callNotes, setCallNotes] = useState("");
+  const [sipLog, setSipLog] = useState<string[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const callStartRef = useRef<number>(0);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const telnyxClientRef = useRef<any>(null);
+  const activeCallRef = useRef<any>(null);
 
   const currentLead = queue[currentIdx];
+
+  function log(msg: string) {
+    const ts = new Date().toLocaleTimeString();
+    setSipLog(prev => [`[${ts}] ${msg}`, ...prev.slice(0, 49)]);
+    console.log(`[SIP] ${msg}`);
+  }
+
+  // Initialize Telnyx WebRTC client
+  useEffect(() => {
+    if (!sipCredentials.username || !sipCredentials.password) {
+      log("No SIP credentials configured. Set them in your user profile.");
+      return;
+    }
+
+    async function initTelnyx() {
+      try {
+        setRegistering(true);
+        log(`Connecting as ${sipCredentials.username}@${SIP_DOMAIN}...`);
+
+        const { TelnyxRTC } = await import("@telnyx/webrtc");
+
+        const client = new TelnyxRTC({
+          login: sipCredentials.username,
+          password: sipCredentials.password,
+          ringtoneFile: undefined,
+          ringbackFile: undefined,
+        });
+
+        client.on("telnyx.ready", () => {
+          log("Registered successfully");
+          setRegistered(true);
+          setRegistering(false);
+        });
+
+        client.on("telnyx.error", (error: any) => {
+          log(`Error: ${error?.message || JSON.stringify(error)}`);
+          setRegistered(false);
+          setRegistering(false);
+        });
+
+        client.on("telnyx.socket.close", () => {
+          log("Connection closed");
+          setRegistered(false);
+        });
+
+        client.on("telnyx.notification", (notification: any) => {
+          const call = notification.call;
+          if (!call) return;
+
+          switch (notification.type) {
+            case "callUpdate":
+              handleCallState(call);
+              break;
+          }
+        });
+
+        await client.connect();
+        telnyxClientRef.current = client;
+      } catch (e: any) {
+        log(`Init failed: ${e.message}`);
+        setRegistering(false);
+      }
+    }
+
+    initTelnyx();
+
+    return () => {
+      if (telnyxClientRef.current) {
+        try { telnyxClientRef.current.disconnect(); } catch {}
+      }
+    };
+  }, [sipCredentials.username, sipCredentials.password]);
+
+  function handleCallState(call: any) {
+    const state = call.state;
+    log(`Call state: ${state}`);
+
+    switch (state) {
+      case "trying":
+      case "requesting":
+        setCallState("connecting");
+        break;
+      case "ringing":
+      case "early":
+        setCallState("ringing");
+        break;
+      case "active":
+        setCallState("active");
+        // Attach remote audio
+        if (audioRef.current && call.remoteStream) {
+          audioRef.current.srcObject = call.remoteStream;
+        }
+        break;
+      case "hangup":
+      case "destroy":
+      case "purge":
+        setCallState("ended");
+        setShowDisposition(true);
+        activeCallRef.current = null;
+        if (audioRef.current) {
+          audioRef.current.srcObject = null;
+        }
+        break;
+    }
+  }
 
   // Call timer
   useEffect(() => {
@@ -72,22 +196,73 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
     return `${m}:${sec.toString().padStart(2, "0")}`;
   }
 
-  async function startCall() {
-    if (!currentLead?.phone) return;
+  function formatDialNumber(phone: string): string {
+    const digits = phone.replace(/\D/g, "");
+    // Add +1 for US numbers if 10 digits
+    if (digits.length === 10) return `+1${digits}`;
+    if (digits.length === 11 && digits[0] === "1") return `+${digits}`;
+    return `+${digits}`;
+  }
+
+  async function startCall(phoneOverride?: string) {
+    const phoneRaw = phoneOverride || currentLead?.phone;
+    if (!phoneRaw) return;
+    if (!registered || !telnyxClientRef.current) {
+      log("Not registered — cannot make calls");
+      return;
+    }
+
+    const dialNum = formatDialNumber(phoneRaw);
+    log(`Dialing ${dialNum}...`);
     setCallState("connecting");
 
-    // In production, this would use Telnyx WebRTC SDK
-    // For now, simulate the call flow
-    setTimeout(() => setCallState("ringing"), 1000);
-    setTimeout(() => {
-      // Simulate: either connect or no answer
-      setCallState("active");
-    }, 3000);
+    try {
+      const call = telnyxClientRef.current.newCall({
+        destinationNumber: dialNum,
+        callerName: sipCredentials.displayName,
+        callerNumber: sipCredentials.username,
+        audio: true,
+        video: false,
+      });
+      activeCallRef.current = call;
+    } catch (e: any) {
+      log(`Call failed: ${e.message}`);
+      setCallState("idle");
+    }
   }
 
   function endCall() {
+    if (activeCallRef.current) {
+      try {
+        activeCallRef.current.hangup();
+      } catch (e: any) {
+        log(`Hangup error: ${e.message}`);
+      }
+    }
     setCallState("ended");
     setShowDisposition(true);
+  }
+
+  function toggleMute() {
+    if (activeCallRef.current) {
+      if (muted) {
+        activeCallRef.current.unmuteAudio();
+      } else {
+        activeCallRef.current.muteAudio();
+      }
+      setMuted(!muted);
+    }
+  }
+
+  function sendDtmf(digit: string) {
+    if (activeCallRef.current) {
+      try {
+        activeCallRef.current.dtmf(digit);
+        log(`DTMF: ${digit}`);
+      } catch (e: any) {
+        log(`DTMF error: ${e.message}`);
+      }
+    }
   }
 
   async function logOutcome(outcome: string) {
@@ -113,11 +288,11 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
     });
 
     setShowDisposition(false);
+    setShowDtmf(false);
     setCallNotes("");
     setCallState("idle");
     setCallTimer(0);
 
-    // Move to next lead
     const newQueue = queue.filter((_, i) => i !== currentIdx);
     setQueue(newQueue);
     if (currentIdx >= newQueue.length && newQueue.length > 0) {
@@ -150,14 +325,42 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
+        {/* Registration status */}
+        <div className={cn(
+          "px-3 py-2 border-b border-border flex items-center gap-2 text-xs",
+          registered ? "text-green-500" : registering ? "text-yellow-500" : "text-red-500"
+        )}>
+          {registered ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+          {registered ? `Online: ${sipCredentials.username}` : registering ? "Connecting..." : "Offline"}
+        </div>
+
         <div className="p-3 border-b border-border flex items-center justify-between">
           <span className="text-sm font-semibold">{queue.length} in queue</span>
           {queue.length > 0 && (
-            <button onClick={clearQueue} className="text-xs text-destructive hover:underline">
-              Clear All
-            </button>
+            <button onClick={clearQueue} className="text-xs text-destructive hover:underline">Clear All</button>
           )}
         </div>
+
+        {/* Manual dial */}
+        <div className="p-2 border-b border-border">
+          <div className="flex gap-1">
+            <input
+              type="tel"
+              value={manualDial}
+              onChange={(e) => setManualDial(e.target.value)}
+              placeholder="Manual dial..."
+              className="flex-1 h-8 px-2 bg-muted border border-border rounded-md text-xs"
+            />
+            <button
+              onClick={() => { if (manualDial) startCall(manualDial); }}
+              disabled={!registered || !manualDial || callState !== "idle"}
+              className="h-8 w-8 bg-green-500 text-white rounded-md flex items-center justify-center disabled:opacity-50"
+            >
+              <Phone className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto">
           {queue.length === 0 ? (
             <div className="p-6 text-center text-muted-foreground text-sm">
@@ -183,7 +386,10 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
                     <p className="text-xs text-muted-foreground">
                       {item.phone ? formatPhone(item.phone) : "No phone"}
                     </p>
-                    <p className="text-xs text-muted-foreground">{item.refNumber}</p>
+                    <p className="text-xs text-muted-foreground">{item.refNumber} · {item.state || ""}</p>
+                    {(item.cardBrand || item.cardIssuer) && (
+                      <p className="text-xs text-muted-foreground">{item.cardBrand} {item.cardIssuer}</p>
+                    )}
                   </div>
                   <button
                     onClick={(e) => { e.stopPropagation(); removeFromQueue(item.leadId); }}
@@ -196,11 +402,19 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
             ))
           )}
         </div>
+
+        {/* SIP log */}
+        <div className="border-t border-border max-h-32 overflow-y-auto p-2">
+          <p className="text-[10px] font-semibold text-muted-foreground mb-1">SIP Log</p>
+          {sipLog.map((msg, i) => (
+            <p key={i} className="text-[10px] text-muted-foreground font-mono leading-tight">{msg}</p>
+          ))}
+        </div>
       </div>
 
       {/* Main call area */}
       <div className="flex-1 flex flex-col items-center justify-center p-6">
-        {!currentLead ? (
+        {!currentLead && callState === "idle" ? (
           <div className="text-center text-muted-foreground">
             <PhoneCall className="w-16 h-16 mx-auto mb-4 opacity-20" />
             <p className="text-lg font-medium">No leads in queue</p>
@@ -209,47 +423,43 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
         ) : (
           <div className="w-full max-w-md text-center space-y-6">
             {/* Lead info */}
-            <div>
-              <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center text-2xl font-bold text-primary mx-auto mb-4">
-                {(currentLead.firstName?.[0] || "?").toUpperCase()}
-              </div>
-              <h2 className="text-2xl font-bold">
-                {[currentLead.firstName, currentLead.lastName].filter(Boolean).join(" ") || "Unknown"}
-              </h2>
-              <p className="text-lg text-muted-foreground mt-1">
-                {currentLead.phone ? formatPhone(currentLead.phone) : "No phone number"}
-              </p>
-              <p className="text-sm text-muted-foreground">{currentLead.refNumber} · {currentLead.state || ""}</p>
-              {currentLead.cardBrand && (
-                <p className="text-sm text-muted-foreground mt-1">
-                  {currentLead.cardBrand} {currentLead.cardIssuer && `· ${currentLead.cardIssuer}`}
+            {currentLead && (
+              <div>
+                <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center text-2xl font-bold text-primary mx-auto mb-4">
+                  {(currentLead.firstName?.[0] || "?").toUpperCase()}
+                </div>
+                <h2 className="text-2xl font-bold">
+                  {[currentLead.firstName, currentLead.lastName].filter(Boolean).join(" ") || "Unknown"}
+                </h2>
+                <p className="text-lg text-muted-foreground mt-1">
+                  {currentLead.phone ? formatPhone(currentLead.phone) : "No phone number"}
                 </p>
-              )}
-            </div>
+                <p className="text-sm text-muted-foreground">{currentLead.refNumber} · {currentLead.state || ""}</p>
+              </div>
+            )}
 
             {/* Call status */}
             {callState !== "idle" && callState !== "ended" && (
-              <div className="space-y-2">
-                <p className={cn(
-                  "text-sm font-medium",
-                  callState === "connecting" && "text-yellow-500",
-                  callState === "ringing" && "text-blue-500 animate-pulse",
-                  callState === "active" && "text-green-500",
-                )}>
-                  {callState === "connecting" && "Connecting..."}
-                  {callState === "ringing" && "Ringing..."}
-                  {callState === "active" && `In Call — ${formatTimer(callTimer)}`}
-                </p>
-              </div>
+              <p className={cn(
+                "text-sm font-medium",
+                callState === "connecting" && "text-yellow-500",
+                callState === "ringing" && "text-blue-500 animate-pulse",
+                callState === "active" && "text-green-500",
+              )}>
+                {callState === "connecting" && "Connecting..."}
+                {callState === "ringing" && "Ringing..."}
+                {callState === "active" && `In Call — ${formatTimer(callTimer)}`}
+              </p>
             )}
 
             {/* Call controls */}
             <div className="flex items-center justify-center gap-4">
               {callState === "idle" && (
                 <button
-                  onClick={startCall}
-                  disabled={!currentLead.phone}
+                  onClick={() => startCall()}
+                  disabled={!currentLead?.phone || !registered}
                   className="w-16 h-16 bg-green-500 hover:bg-green-600 text-white rounded-full flex items-center justify-center transition-colors disabled:opacity-50"
+                  title={!registered ? "Not registered — configure SIP credentials" : "Call"}
                 >
                   <Phone className="w-7 h-7" />
                 </button>
@@ -258,15 +468,26 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
               {(callState === "connecting" || callState === "ringing" || callState === "active") && (
                 <>
                   {callState === "active" && (
-                    <button
-                      onClick={() => setMuted(!muted)}
-                      className={cn(
-                        "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
-                        muted ? "bg-red-500/20 text-red-500" : "bg-muted text-foreground"
-                      )}
-                    >
-                      {muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                    </button>
+                    <>
+                      <button
+                        onClick={toggleMute}
+                        className={cn(
+                          "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
+                          muted ? "bg-red-500/20 text-red-500" : "bg-muted text-foreground"
+                        )}
+                      >
+                        {muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                      </button>
+                      <button
+                        onClick={() => setShowDtmf(!showDtmf)}
+                        className={cn(
+                          "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
+                          showDtmf ? "bg-primary/20 text-primary" : "bg-muted text-foreground"
+                        )}
+                      >
+                        <Hash className="w-5 h-5" />
+                      </button>
+                    </>
                   )}
                   <button
                     onClick={endCall}
@@ -277,6 +498,21 @@ export function CallQueueClient({ initialQueue, sipUsername, currentUser }: Prop
                 </>
               )}
             </div>
+
+            {/* DTMF pad */}
+            {showDtmf && callState === "active" && (
+              <div className="grid grid-cols-3 gap-2 max-w-[200px] mx-auto">
+                {dtmfTones.map((digit) => (
+                  <button
+                    key={digit}
+                    onClick={() => sendDtmf(digit)}
+                    className="h-12 bg-muted border border-border rounded-lg text-lg font-semibold hover:bg-muted/80 transition-colors"
+                  >
+                    {digit}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Skip to next */}
             {callState === "idle" && queue.length > 1 && (

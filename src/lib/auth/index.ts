@@ -20,6 +20,9 @@ export interface SessionUser {
   isActive: boolean;
   leadsVisibility: string | null;
   sipUsername: string | null;
+  sipPassword: string | null;
+  sipAuthUser: string | null;
+  sipDisplayName: string | null;
 }
 
 // ─── Get current session user (server component) ────────
@@ -41,6 +44,9 @@ export async function getUser(): Promise<SessionUser | null> {
       isActive: users.isActive,
       leadsVisibility: users.leadsVisibility,
       sipUsername: users.sipUsername,
+      sipPassword: users.sipPassword,
+      sipAuthUser: users.sipAuthUser,
+      sipDisplayName: users.sipDisplayName,
       forceLogoutAt: users.forceLogoutAt,
     })
     .from(sessions)
@@ -73,6 +79,9 @@ export async function getUser(): Promise<SessionUser | null> {
     isActive: row.isActive,
     leadsVisibility: row.leadsVisibility,
     sipUsername: row.sipUsername,
+    sipPassword: row.sipPassword,
+    sipAuthUser: row.sipAuthUser,
+    sipDisplayName: row.sipDisplayName,
   };
 }
 
