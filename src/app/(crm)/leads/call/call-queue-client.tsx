@@ -342,9 +342,16 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       // SimpleUser only allows one call at a time — "Session already exists" error
       if (simpleUser.session) {
         log("Cleaning up stale session before new call");
+        // Save and restore dialedNumberRef around cleanup — hangup() triggers
+        // onCallHangup which would clear it and show disposition for the WRONG call
+        const savedManual = dialedNumberRef.current;
         try { await simpleUser.hangup(); } catch {}
-        // Small delay to let SIP.js clean up internal state
         await new Promise(r => setTimeout(r, 200));
+        dialedNumberRef.current = savedManual;
+        setDialedNumber(savedManual);
+        // Reset call state back to connecting (onCallHangup may have changed it)
+        setCallState("connecting");
+        setShowDisposition(false);
       }
 
       await simpleUser.call(
