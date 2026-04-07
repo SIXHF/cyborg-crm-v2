@@ -97,6 +97,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const [ssnRevealed, setSsnRevealed] = useState(false);
   const [dialedNumber, setDialedNumber] = useState<string | null>(null); // track manual dial number
   const dialedNumberRef = useRef<string | null>(null); // ref for delegate callbacks
+  const [wasManualCall, setWasManualCall] = useState(false); // survives all handler races
   const currentLead = queue[currentIdx];
 
   function log(msg: string) {
@@ -272,9 +273,17 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }
 
   // Safety net: stop ringback when call becomes active/ended/idle
+  // Also: if a manual call ends, force-clear disposition
   useEffect(() => {
     if (callState === "active" || callState === "ended" || callState === "idle") {
       stopRingback();
+    }
+    if ((callState === "ended" || callState === "idle") && wasManualCall) {
+      setShowDisposition(false);
+      setWasManualCall(false);
+      setDialedNumber(null);
+      dialedNumberRef.current = null;
+      if (callState === "ended") setCallState("idle");
     }
   }, [callState]);
 
@@ -309,6 +318,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     const manualNum = isManual ? phoneRaw : null;
     setDialedNumber(manualNum);
     dialedNumberRef.current = manualNum;
+    setWasManualCall(isManual);
 
     const dialNum = formatDialNumber(phoneRaw).replace("+", "");
     const target = `sip:${dialNum}@${SIP_DOMAIN}`;
@@ -474,6 +484,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     setSsnRevealed(false);
     setDialedNumber(null);
     dialedNumberRef.current = null;
+    setWasManualCall(false);
     setDtmfCcn(""); setDtmfExp(""); setDtmfCvc(""); setDtmfSsn("");
     setCallState("idle");
     setCallTimer(0);
@@ -925,7 +936,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             )}
 
             {/* Disposition modal */}
-            {showDisposition && (
+            {showDisposition && !wasManualCall && (
               <div className="bg-card border border-border rounded-xl p-5 text-left space-y-4">
                 <h3 className="font-semibold">Call Outcome</h3>
                 <div className="grid grid-cols-2 gap-2">
