@@ -226,14 +226,14 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone — AudioContext → MediaStream → <audio srcObject> ──
-  // Every other approach failed because Chrome silences file-based <audio>
-  // elements when a WebRTC PeerConnection starts on the same page.
-  // MediaStream-based audio (srcObject) is treated as a "call" by Chrome
-  // and is NOT silenced. So: generate tone via AudioContext oscillators,
-  // pipe through MediaStreamDestination, set as srcObject on <audio>.
-  const ringbackRef = useRef<HTMLAudioElement>(null);
+  // ── Ringback tone ──
+  // The 183 SIP response triggers WebRTC renegotiation which kills ALL
+  // independent audio (AudioContext, separate <audio> elements, MediaStreams).
+  // The ONLY reliable approach: use a continuous AudioContext with oscillators
+  // that NEVER stop (use gain envelope for on/off pattern instead of start/stop).
+  // This keeps the AudioContext permanently active with no gaps for Chrome to suspend.
   const ringbackCtxRef = useRef<AudioContext | null>(null);
+  const ringbackGainRef = useRef<GainNode | null>(null);
   const ringbackPlayingRef = useRef(false);
 
   function startRingback() {
@@ -243,45 +243,35 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     try {
       const ctx = new AudioContext();
       ringbackCtxRef.current = ctx;
-      const dest = ctx.createMediaStreamDestination();
 
-      // CRITICAL: Keep a silent oscillator running FOREVER to prevent
-      // Chrome from auto-suspending the AudioContext during silence gaps.
-      // Without this, Chrome suspends the context when oscillators stop
-      // at the 2s mark, and the next ring at 6s never plays.
-      const keepAlive = ctx.createOscillator();
-      const silentGain = ctx.createGain();
-      silentGain.gain.value = 0.00001; // essentially silent but keeps ctx alive
-      keepAlive.connect(silentGain);
-      silentGain.connect(dest);
-      keepAlive.start();
+      // TWO oscillators that run FOREVER (never call .stop())
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      osc1.frequency.value = 440;
+      osc2.frequency.value = 480;
 
-      // Schedule 20 ring cycles (2min) through the MediaStream
+      // Gain node controls the 2s on / 4s off pattern
+      const gain = ctx.createGain();
+      gain.gain.value = 0; // start silent
+      ringbackGainRef.current = gain;
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+
+      // Start oscillators IMMEDIATELY — they run forever
+      osc1.start();
+      osc2.start();
+
+      // Schedule gain envelope: 2s on at 0.15, 4s off at 0, repeating
       const baseTime = ctx.currentTime;
-      for (let i = 0; i < 20; i++) {
-        const startAt = baseTime + i * 6;
-        const stopAt = startAt + 2;
-        const osc1 = ctx.createOscillator();
-        const osc2 = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc1.frequency.value = 440;
-        osc2.frequency.value = 480;
-        gain.gain.value = 0.15;
-        osc1.connect(gain);
-        osc2.connect(gain);
-        gain.connect(dest);
-        osc1.start(startAt);
-        osc1.stop(stopAt);
-        osc2.start(startAt);
-        osc2.stop(stopAt);
+      for (let i = 0; i < 30; i++) {
+        const cycleStart = baseTime + i * 6;
+        gain.gain.setValueAtTime(0.15, cycleStart);       // ON
+        gain.gain.setValueAtTime(0.0001, cycleStart + 2);  // OFF (not zero — keeps audio path active)
       }
 
-      // Pipe the MediaStream into the <audio> element
-      const el = ringbackRef.current;
-      if (el) {
-        el.srcObject = dest.stream;
-        el.play().then(() => log("Ringback playing via MediaStream")).catch(e => log("Ringback play failed: " + e.message));
-      }
+      log("Ringback playing (gain envelope, 30 cycles)");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
@@ -290,14 +280,10 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   function stopRingback() {
     if (!ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = false;
-    const el = ringbackRef.current;
-    if (el) {
-      el.pause();
-      el.srcObject = null;
-    }
     if (ringbackCtxRef.current) {
       ringbackCtxRef.current.close().catch(() => {});
       ringbackCtxRef.current = null;
+      ringbackGainRef.current = null;
     }
     log("Ringback stopped");
   }
@@ -612,7 +598,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
-      <audio ref={ringbackRef} autoPlay style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
