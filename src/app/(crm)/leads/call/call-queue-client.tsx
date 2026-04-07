@@ -95,6 +95,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const activeCallRef = useRef<any>(null);
 
   const [ssnRevealed, setSsnRevealed] = useState(false);
+  const [dialedNumber, setDialedNumber] = useState<string | null>(null); // track manual dial number
+  const dialedNumberRef = useRef<string | null>(null); // ref for delegate callbacks
   const currentLead = queue[currentIdx];
 
   function log(msg: string) {
@@ -158,9 +160,16 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             onCallHangup: () => {
               log("Call ended by remote");
               stopRingback();
-              setCallState("ended");
-              setShowDisposition(true);
               activeCallRef.current = null;
+              // Skip disposition for manual dials — just go back to idle
+              if (dialedNumberRef.current) {
+                setDialedNumber(null);
+                dialedNumberRef.current = null;
+                setCallState("idle");
+              } else {
+                setCallState("ended");
+                setShowDisposition(true);
+              }
             },
             onRegistered: () => {
               log("Registered successfully ✓");
@@ -217,21 +226,21 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone via DOM <audio> element ──
-  // Why DOM <audio> and not AudioContext:
-  //   Chrome SUSPENDS AudioContext when WebRTC peer connection starts
-  //   (SIP.js creates a peer connection for the call). All pre-scheduled
-  //   oscillators freeze. DOM <audio> elements use a separate media pipeline
-  //   that is NOT affected by WebRTC, so they keep playing.
+  // ── Ringback tone ──
+  // Use the SAME <audio> element as SIP remote audio (audioRef).
+  // Why: Chrome pauses a second <audio> element when WebRTC media arrives
+  // on the first one (audio focus stealing). By using the SAME element,
+  // SIP.js simply overwrites our ringback srcObject when the call connects.
   //
-  // Generate a 30s WAV (5 ring cycles: 2s tone + 4s silence each) on mount,
-  // set as src on a DOM <audio loop> element, play/pause via ref.
-  const ringbackRef = useRef<HTMLAudioElement>(null);
+  // Approach: generate WAV blob, set as audioRef.src for ringback.
+  // When SIP.js attaches remote media, it sets audioRef.srcObject which
+  // takes priority over .src — our ringback stops automatically.
   const ringbackBlobRef = useRef<string | null>(null);
+  const ringbackPlayingRef = useRef(false);
 
   useEffect(() => {
     // Generate 30s US ringback WAV: 440Hz + 480Hz, 2s on / 4s off, 5 cycles
-    const sr = 8000;
+    const sr = 44100; // CD quality — 8kHz caused decode issues in some browsers
     const cycleLen = sr * 6;
     const toneLen = sr * 2;
     const total = cycleLen * 5;
@@ -252,28 +261,31 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       }
       dv.setInt16(44 + i * 2, s | 0, true);
     }
-    const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
-    ringbackBlobRef.current = url;
-    // Set src on the DOM audio element
-    if (ringbackRef.current) {
-      ringbackRef.current.src = url;
-      ringbackRef.current.load();
-    }
-    return () => URL.revokeObjectURL(url);
+    ringbackBlobRef.current = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+    return () => { if (ringbackBlobRef.current) URL.revokeObjectURL(ringbackBlobRef.current); };
   }, []);
 
   function startRingback() {
-    const el = ringbackRef.current;
-    if (!el) return;
-    el.currentTime = 0;
-    el.play().then(() => log("Ringback playing via DOM audio")).catch(e => log("Ringback play failed: " + e.message));
+    const el = audioRef.current; // use the SAME audio element as SIP remote
+    if (!el || !ringbackBlobRef.current || ringbackPlayingRef.current) return;
+    ringbackPlayingRef.current = true;
+    el.srcObject = null; // clear any WebRTC stream
+    el.src = ringbackBlobRef.current;
+    el.loop = true;
+    el.volume = 0.6;
+    el.play().then(() => log("Ringback playing")).catch(e => log("Ringback play failed: " + e.message));
   }
 
   function stopRingback() {
-    const el = ringbackRef.current;
-    if (!el) return;
-    el.pause();
-    el.currentTime = 0;
+    if (!ringbackPlayingRef.current) return;
+    ringbackPlayingRef.current = false;
+    const el = audioRef.current;
+    if (el) {
+      el.pause();
+      el.removeAttribute("src");
+      el.srcObject = null;
+      el.loop = false;
+    }
     log("Ringback stopped");
   }
 
@@ -305,6 +317,11 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       log("Not registered — cannot make calls");
       return;
     }
+
+    const isManualDial = phoneOverride && phoneOverride !== currentLead?.phone;
+    const dialNum_ = isManualDial ? phoneOverride : null;
+    setDialedNumber(dialNum_);
+    dialedNumberRef.current = dialNum_;
 
     const dialNum = formatDialNumber(phoneRaw).replace("+", "");
     const target = `sip:${dialNum}@${SIP_DOMAIN}`;
@@ -362,9 +379,15 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             setCallState("active");
           } else if (state === "Terminated") {
             stopRingback();
-            setCallState("ended");
-            setShowDisposition(true);
             activeCallRef.current = null;
+            if (dialedNumberRef.current) {
+              setDialedNumber(null);
+              dialedNumberRef.current = null;
+              setCallState("idle");
+            } else {
+              setCallState("ended");
+              setShowDisposition(true);
+            }
           }
         });
       }
@@ -385,8 +408,14 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       }
     }
     activeCallRef.current = null;
-    setCallState("ended");
-    setShowDisposition(true);
+    if (dialedNumberRef.current) {
+      setDialedNumber(null);
+      dialedNumberRef.current = null;
+      setCallState("idle");
+    } else {
+      setCallState("ended");
+      setShowDisposition(true);
+    }
   }
 
   function toggleMute() {
@@ -452,25 +481,31 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     setShowDtmfCapture(false);
     setCallNotes("");
     setSsnRevealed(false);
+    setDialedNumber(null);
+    dialedNumberRef.current = null;
     setDtmfCcn(""); setDtmfExp(""); setDtmfCvc(""); setDtmfSsn("");
     setCallState("idle");
     setCallTimer(0);
 
-    const newQueue = queue.filter((_, i) => i !== currentIdx);
-    setQueue(newQueue);
-    const newIdx = currentIdx >= newQueue.length ? Math.max(0, newQueue.length - 1) : currentIdx;
-    setCurrentIdx(newIdx);
+    // Only modify queue if this was a queue lead (not a manual dial)
+    const wasManualDial = !!dialedNumber;
+    if (!wasManualDial) {
+      const newQueue = queue.filter((_, i) => i !== currentIdx);
+      setQueue(newQueue);
+      const newIdx = currentIdx >= newQueue.length ? Math.max(0, newQueue.length - 1) : currentIdx;
+      setCurrentIdx(newIdx);
 
-    // Auto-dialer: start next call after delay
-    // IMPORTANT: pass the next lead's phone explicitly — React state updates
-    // haven't applied yet, so currentLead would still reference the OLD lead
-    if (autoDialEnabled && !autoDialPaused && newQueue.length > 0) {
-      const nextLead = newQueue[newIdx];
-      if (nextLead?.phone) {
-        log(`Auto-dial: calling ${nextLead.firstName} ${nextLead.lastName} in ${autoDialDelay}s...`);
-        autoDialTimerRef.current = setTimeout(() => {
-          if (!autoDialPaused) startCall(nextLead.phone!);
-        }, autoDialDelay * 1000);
+      // Auto-dialer: start next call after delay
+      // IMPORTANT: pass the next lead's phone explicitly — React state updates
+      // haven't applied yet, so currentLead would still reference the OLD lead
+      if (autoDialEnabled && !autoDialPaused && newQueue.length > 0) {
+        const nextLead = newQueue[newIdx];
+        if (nextLead?.phone) {
+          log(`Auto-dial: calling ${nextLead.firstName} ${nextLead.lastName} in ${autoDialDelay}s...`);
+          autoDialTimerRef.current = setTimeout(() => {
+            if (!autoDialPaused) startCall(nextLead.phone!);
+          }, autoDialDelay * 1000);
+        }
       }
     }
   }
@@ -553,7 +588,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
-      <audio ref={ringbackRef} loop preload="auto" style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
@@ -584,7 +618,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               className="flex-1 h-8 px-2 bg-muted border border-border rounded-md text-xs"
             />
             <button
-              onClick={() => { if (manualDial) startCall(manualDial); }}
+              onClick={() => { if (manualDial) { startCall(manualDial); setManualDial(""); } }}
               disabled={!registered || !manualDial || callState !== "idle"}
               className="h-8 w-8 bg-green-500 text-white rounded-md flex items-center justify-center disabled:opacity-50"
             >
@@ -654,8 +688,16 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
           </div>
         ) : (
           <div className="w-full max-w-lg text-center space-y-6">
-            {/* Lead info */}
-            {currentLead && (
+            {/* Lead info / Manual dial info */}
+            {dialedNumber && callState !== "idle" ? (
+              <div>
+                <div className="w-20 h-20 bg-yellow-500/20 rounded-full flex items-center justify-center text-2xl font-bold text-yellow-500 mx-auto mb-4">
+                  <Phone className="w-8 h-8" />
+                </div>
+                <h2 className="text-2xl font-bold">Manual Dial</h2>
+                <p className="text-lg text-muted-foreground mt-1">{formatPhone(dialedNumber)}</p>
+              </div>
+            ) : currentLead ? (
               <div>
                 <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center text-2xl font-bold text-primary mx-auto mb-4">
                   {(currentLead.firstName?.[0] || "?").toUpperCase()}
@@ -668,7 +710,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
                 </p>
                 <p className="text-sm text-muted-foreground">{currentLead.refNumber} · {currentLead.state || ""}</p>
               </div>
-            )}
+            ) : null}
 
             {/* Call status */}
             {callState !== "idle" && callState !== "ended" && (
@@ -752,7 +794,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
                 <div className="flex items-center justify-between">
                   <h4 className="font-semibold text-base">Lead Details</h4>
                   <a
-                    href={`/leads/${currentLead.id}/edit`}
+                    href={`/leads/${currentLead.leadId}/edit`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="h-8 px-3 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-primary/90"
