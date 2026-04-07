@@ -226,21 +226,14 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [callState]);
 
-  // ── Ringback tone ──
-  // Use the SAME <audio> element as SIP remote audio (audioRef).
-  // Why: Chrome pauses a second <audio> element when WebRTC media arrives
-  // on the first one (audio focus stealing). By using the SAME element,
-  // SIP.js simply overwrites our ringback srcObject when the call connects.
-  //
-  // Approach: generate WAV blob, set as audioRef.src for ringback.
-  // When SIP.js attaches remote media, it sets audioRef.srcObject which
-  // takes priority over .src — our ringback stops automatically.
-  const ringbackBlobRef = useRef<string | null>(null);
+  // ── Ringback tone — dedicated audio element with auto-resume ──
+  const ringbackRef = useRef<HTMLAudioElement>(null);
   const ringbackPlayingRef = useRef(false);
+  const ringbackMonitorRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // Generate 30s US ringback WAV: 440Hz + 480Hz, 2s on / 4s off, 5 cycles
-    const sr = 44100; // CD quality — 8kHz caused decode issues in some browsers
+    // Generate 30s ringback WAV (8kHz, 480KB) as base64 data URI
+    const sr = 8000;
     const cycleLen = sr * 6;
     const toneLen = sr * 2;
     const total = cycleLen * 5;
@@ -261,31 +254,42 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       }
       dv.setInt16(44 + i * 2, s | 0, true);
     }
-    ringbackBlobRef.current = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
-    return () => { if (ringbackBlobRef.current) URL.revokeObjectURL(ringbackBlobRef.current); };
+    // Use base64 data URI — more reliable than Blob URL
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const dataUri = "data:audio/wav;base64," + btoa(binary);
+    if (ringbackRef.current) {
+      ringbackRef.current.src = dataUri;
+      ringbackRef.current.load();
+    }
   }, []);
 
   function startRingback() {
-    const el = audioRef.current; // use the SAME audio element as SIP remote
-    if (!el || !ringbackBlobRef.current || ringbackPlayingRef.current) return;
+    const el = ringbackRef.current;
+    if (!el || ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = true;
-    el.srcObject = null; // clear any WebRTC stream
-    el.src = ringbackBlobRef.current;
-    el.loop = true;
-    el.volume = 0.6;
+    el.currentTime = 0;
     el.play().then(() => log("Ringback playing")).catch(e => log("Ringback play failed: " + e.message));
+    // Monitor: if something pauses it, resume automatically
+    ringbackMonitorRef.current = setInterval(() => {
+      if (!ringbackPlayingRef.current) return;
+      if (el.paused) {
+        log("Ringback was paused externally — resuming");
+        el.play().catch(() => {});
+      }
+    }, 1000);
   }
 
   function stopRingback() {
     if (!ringbackPlayingRef.current) return;
     ringbackPlayingRef.current = false;
-    const el = audioRef.current;
-    if (el) {
-      el.pause();
-      el.removeAttribute("src");
-      el.srcObject = null;
-      el.loop = false;
+    if (ringbackMonitorRef.current) {
+      clearInterval(ringbackMonitorRef.current);
+      ringbackMonitorRef.current = null;
     }
+    const el = ringbackRef.current;
+    if (el) { el.pause(); el.currentTime = 0; }
     log("Ringback stopped");
   }
 
@@ -310,7 +314,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return `+${digits}`;
   }
 
-  async function startCall(phoneOverride?: string) {
+  async function startCall(phoneOverride?: string, isManual = false) {
     const phoneRaw = phoneOverride || currentLead?.phone;
     if (!phoneRaw) return;
     if (!registered || !telnyxClientRef.current) {
@@ -318,10 +322,15 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       return;
     }
 
-    const isManualDial = phoneOverride && phoneOverride !== currentLead?.phone;
-    const dialNum_ = isManualDial ? phoneOverride : null;
-    setDialedNumber(dialNum_);
-    dialedNumberRef.current = dialNum_;
+    // Cancel any pending auto-dial timer
+    if (autoDialTimerRef.current) {
+      clearTimeout(autoDialTimerRef.current);
+      autoDialTimerRef.current = null;
+    }
+
+    const manualNum = isManual ? phoneRaw : null;
+    setDialedNumber(manualNum);
+    dialedNumberRef.current = manualNum;
 
     const dialNum = formatDialNumber(phoneRaw).replace("+", "");
     const target = `sip:${dialNum}@${SIP_DOMAIN}`;
@@ -476,6 +485,9 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       totalDuration: prev.totalDuration + callTimer,
     }));
 
+    // Check BEFORE clearing state
+    const wasManualDial = !!dialedNumberRef.current;
+
     setShowDisposition(false);
     setShowDtmf(false);
     setShowDtmfCapture(false);
@@ -486,9 +498,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     setDtmfCcn(""); setDtmfExp(""); setDtmfCvc(""); setDtmfSsn("");
     setCallState("idle");
     setCallTimer(0);
-
-    // Only modify queue if this was a queue lead (not a manual dial)
-    const wasManualDial = !!dialedNumber;
     if (!wasManualDial) {
       const newQueue = queue.filter((_, i) => i !== currentIdx);
       setQueue(newQueue);
@@ -588,6 +597,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <audio ref={audioRef} autoPlay />
+      <audio ref={ringbackRef} loop preload="auto" style={{ display: "none" }} />
 
       {/* Queue list (left side) */}
       <div className="w-80 border-r border-border bg-card flex flex-col">
@@ -618,7 +628,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
               className="flex-1 h-8 px-2 bg-muted border border-border rounded-md text-xs"
             />
             <button
-              onClick={() => { if (manualDial) { startCall(manualDial); setManualDial(""); } }}
+              onClick={() => { if (manualDial) { startCall(manualDial, true); setManualDial(""); } }}
               disabled={!registered || !manualDial || callState !== "idle"}
               className="h-8 w-8 bg-green-500 text-white rounded-md flex items-center justify-center disabled:opacity-50"
             >
