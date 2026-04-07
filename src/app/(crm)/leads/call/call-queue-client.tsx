@@ -285,26 +285,51 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         gain.gain.setValueAtTime(0.0001, base + i * 6 + 2);
       }
 
-      // Set the ringback stream as srcObject on audioRef
-      // This is the SAME element SIP.js uses for remote call audio.
-      // Chrome allows srcObject playback during WebRTC calls.
+      // ALSO set on audioRef as srcObject (WebRTC audio path)
       if (audioRef.current) {
         audioRef.current.srcObject = dest.stream;
         audioRef.current.play().catch(() => {});
       }
 
-      log("Ringback playing via audioRef.srcObject");
+      // ALSO try direct ctx.destination (in case Windows ducking is off)
+      const osc3 = ctx.createOscillator();
+      const osc4 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc3.frequency.value = 440;
+      osc4.frequency.value = 480;
+      gain2.gain.value = 0.0001;
+      osc3.connect(gain2);
+      osc4.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc3.start();
+      osc4.start();
+      for (let i = 0; i < 30; i++) {
+        gain2.gain.setValueAtTime(0.2, base + i * 6);
+        gain2.gain.setValueAtTime(0.0001, base + i * 6 + 2);
+      }
+
+      // ALSO try a plain audio element with cache-busting
+      const fallback = new Audio("/ringback.mp3?t=" + Date.now());
+      fallback.volume = 1.0;
+      fallback.loop = true;
+      fallback.play().catch(() => {});
+
+      // Store fallback ref for cleanup
+      (ctx as any).__fallbackAudio = fallback;
+      log("Ringback: 3 outputs (audioRef.srcObject + ctx.destination + audio element)");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
   }
 
   function stopRingback() {
-    if (ringbackCtxRef.current) {
-      ringbackCtxRef.current.close().catch(() => {});
+    const ctx = ringbackCtxRef.current;
+    if (ctx) {
+      // Clean up fallback audio element
+      try { (ctx as any).__fallbackAudio?.pause(); } catch {}
+      ctx.close().catch(() => {});
       ringbackCtxRef.current = null;
     }
-    // Clear srcObject so onCallAnswered can set the remote stream
     if (audioRef.current) {
       audioRef.current.srcObject = null;
     }
