@@ -214,16 +214,24 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         await simpleUser.register();
         telnyxClientRef.current = simpleUser;
 
-        // Pre-acquire microphone immediately after registration.
-        // This triggers Windows "Communications Activity" audio ducking NOW
-        // (when nothing is playing) instead of during call setup (which would
-        // kill the ringback tone). Once ducking is already active, new audio
-        // sources play at reduced volume instead of being abruptly muted.
+        // Pre-acquire microphone AND monkey-patch getUserMedia so SIP.js
+        // reuses this stream instead of calling getUserMedia again.
+        // Each getUserMedia call triggers Windows audio ducking which
+        // mutes all non-communications audio. By preventing the second
+        // call during simpleUser.call(), the ringback stays audible.
         try {
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // Keep a reference so it's not garbage collected
-          (simpleUser as any).__preAcquiredMic = micStream;
-          log("Mic pre-acquired (Windows audio ducking stabilized)");
+          const originalGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+          const micStream = await originalGUM({ audio: true });
+          log("Mic pre-acquired");
+
+          // Monkey-patch: return pre-acquired stream for audio requests
+          navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints) => {
+            if (constraints?.audio) {
+              log("getUserMedia intercepted — reusing pre-acquired mic");
+              return micStream;
+            }
+            return originalGUM(constraints);
+          };
         } catch (e: any) {
           log("Mic pre-acquire failed: " + e.message);
         }
