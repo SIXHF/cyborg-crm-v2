@@ -50,7 +50,7 @@ export function ProfileClient({ user }: Props) {
 
     try {
       const { SimpleUser } = await import("sip.js/lib/platform/web");
-      const SIP_DOMAIN = "sip.osetec.net";
+      const SIP_DOMAIN = "sip.osetec.com"; // Kamailio WSS proxy
       const server = `wss://${SIP_DOMAIN}/ws`;
       const aor = `sip:${sipUsername}@${SIP_DOMAIN}`;
       const authUser = sipAuthUser || sipUsername;

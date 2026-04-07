@@ -36,7 +36,7 @@ interface Props {
   currentUser: { id: number; fullName: string };
 }
 
-const SIP_DOMAIN = "sip.osetec.net";
+const SIP_DOMAIN = "sip.osetec.com"; // Kamailio WSS proxy → routes to Magnus Billing
 
 const outcomes = [
   { value: "picked_up", label: "Picked Up", color: "bg-green-500" },
@@ -122,7 +122,10 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
             sessionDescriptionHandlerFactoryOptions: {
               peerConnectionConfiguration: {
                 iceServers: [
-                  { urls: "stun:stun.l.google.com:19302" },
+                  { urls: "stun:187.77.87.33:3478" },
+                  { urls: "turn:187.77.87.33:3478", username: "osetec", credential: "CyborgTurn2026!" },
+                  { urls: "turn:187.77.87.33:3478?transport=tcp", username: "osetec", credential: "CyborgTurn2026!" },
+                  { urls: "turns:187.77.87.33:5349?transport=tcp", username: "osetec", credential: "CyborgTurn2026!" },
                 ],
               },
             },
