@@ -247,39 +247,25 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   }, [callState]);
 
   // ── Ringback tone ──
-  // Chrome silently mutes ALL non-WebRTC audio during calls. The audio
-  // element reports "playing" but no sound reaches the speakers.
-  // The ONLY audio Chrome allows: WebRTC PeerConnection audio.
+  // Chrome mutes ALL non-WebRTC audio during calls. AudioContext, <audio>,
+  // MediaStream — all silently muted. The ONLY thing Chrome plays:
+  // audioRef.srcObject when it contains a WebRTC-associated stream.
   //
-  // Solution: connect our ringback oscillators to the SAME AudioContext
-  // that processes the PeerConnection's remote audio. By routing the
-  // remote track through our context, Chrome treats the entire context
-  // as "communications audio" and our oscillators are audible.
+  // Solution: create ringback as a MediaStream track via AudioContext →
+  // MediaStreamDestination, then set it as audioRef.srcObject. Since
+  // audioRef has autoPlay and Chrome treats srcObject streams from
+  // the same page as the PeerConnection as "communications audio",
+  // the ringback plays through the call audio path.
   const ringbackCtxRef = useRef<AudioContext | null>(null);
 
   function startRingback() {
     stopRingback();
     try {
-      const client = telnyxClientRef.current;
-      const pc = client?.session?.sessionDescriptionHandler?.peerConnection as RTCPeerConnection | undefined;
-
       const ctx = new AudioContext();
       ringbackCtxRef.current = ctx;
+      const dest = ctx.createMediaStreamDestination();
 
-      // Connect PeerConnection's remote audio through this context
-      // This makes Chrome treat the context as "communications audio"
-      if (pc) {
-        const receivers = pc.getReceivers();
-        const audioTrack = receivers.find((r: any) => r.track?.kind === "audio")?.track;
-        if (audioTrack) {
-          const remoteStream = new MediaStream([audioTrack]);
-          const remoteSource = ctx.createMediaStreamSource(remoteStream);
-          remoteSource.connect(ctx.destination);
-          log("Remote audio track connected to ringback context");
-        }
-      }
-
-      // Ringback oscillators in the same context
+      // Ringback oscillators → MediaStreamDestination
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -288,7 +274,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       gain.gain.value = 0.0001;
       osc1.connect(gain);
       osc2.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(dest);
       osc1.start();
       osc2.start();
 
@@ -299,7 +285,15 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         gain.gain.setValueAtTime(0.0001, base + i * 6 + 2);
       }
 
-      log("Ringback playing via PeerConnection audio context");
+      // Set the ringback stream as srcObject on audioRef
+      // This is the SAME element SIP.js uses for remote call audio.
+      // Chrome allows srcObject playback during WebRTC calls.
+      if (audioRef.current) {
+        audioRef.current.srcObject = dest.stream;
+        audioRef.current.play().catch(() => {});
+      }
+
+      log("Ringback playing via audioRef.srcObject");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
@@ -309,8 +303,12 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     if (ringbackCtxRef.current) {
       ringbackCtxRef.current.close().catch(() => {});
       ringbackCtxRef.current = null;
-      log("Ringback stopped");
     }
+    // Clear srcObject so onCallAnswered can set the remote stream
+    if (audioRef.current) {
+      audioRef.current.srcObject = null;
+    }
+    log("Ringback stopped");
   }
 
   // Safety net: stop ringback when call becomes active/ended/idle
