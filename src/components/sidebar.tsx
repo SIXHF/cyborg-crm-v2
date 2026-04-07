@@ -33,6 +33,7 @@ const adminItems = [
   ]},
   { label: "Analytics", icon: BarChart3, children: [
     { href: "/admin/analytics", label: "Reports" },
+    { href: "/admin/analytics/live", label: "Live / Calls" },
   ]},
   { label: "Data", icon: Database, children: [
     { href: "/leads/import", label: "Bulk Upload" },
