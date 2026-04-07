@@ -213,18 +213,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         await simpleUser.connect();
         await simpleUser.register();
         telnyxClientRef.current = simpleUser;
-
-        // Pre-acquire microphone so getUserMedia is already done before
-        // the first call. Without this, the first call's getUserMedia
-        // kills the ringback audio. No monkey-patch — just pre-acquire.
-        try {
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // Keep reference so it's not garbage collected
-          (simpleUser as any).__preAcquiredMic = micStream;
-          log("Mic pre-acquired");
-        } catch (e: any) {
-          log("Mic pre-acquire failed: " + e.message);
-        }
       } catch (e: any) {
         log(`Init failed: ${e.message}`);
         setRegistering(false);
@@ -340,11 +328,6 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     log(`Dialing ${target}...`);
     setCallState("connecting");
 
-    // Start ringback NOW — mic was pre-acquired at SIP registration,
-    // so Windows audio ducking is already active. No new getUserMedia
-    // transition will kill this audio.
-    startRingback();
-
     try {
       const simpleUser = telnyxClientRef.current;
 
@@ -390,6 +373,12 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         },
       );
       activeCallRef.current = simpleUser.session;
+
+      // Start ringback HERE — getUserMedia is done, INVITE sent.
+      // Starting before call() gets killed by getUserMedia.
+      // Starting at registration (pre-acquire) triggers Windows ducking.
+      // This is the only safe point.
+      startRingback();
 
       // Also attach session state listener as safety net
       if (simpleUser.session) {
