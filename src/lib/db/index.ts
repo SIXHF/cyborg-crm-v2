@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 
-const connectionString = process.env.DATABASE_URL!;
+const connectionString = process.env.DATABASE_URL || 'postgresql://localhost:5432/cyborg_crm';
 
 // Connection pool — 20 connections handles 500+ concurrent users via async I/O
 const client = postgres(connectionString, {
