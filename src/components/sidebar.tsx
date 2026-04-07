@@ -151,6 +151,11 @@ export function Sidebar({ user }: SidebarProps) {
 
       {/* Footer */}
       <div className="border-t border-border px-4 py-3 space-y-2">
+        <Link href="/profile" onClick={() => setMobileOpen(false)}
+          className="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-sm text-muted-foreground hover:bg-muted transition-colors">
+          <Shield className="w-4 h-4" />
+          My Profile / SIP
+        </Link>
         <button
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           className="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-sm text-muted-foreground hover:bg-muted transition-colors"
