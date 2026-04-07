@@ -266,32 +266,34 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       ringbackCtxRef.current = ctx;
       const dest = ctx.createMediaStreamDestination();
 
+      // DIAGNOSTIC: continuous tone, NO gain scheduling
+      // If this plays for >5s, AudioContext works and gain scheduling is broken
+      // If this stops at 2s, AudioContext/MediaStream is dying
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
       osc1.frequency.value = 440;
       osc2.frequency.value = 480;
+      gain.gain.value = 0.15; // constant volume, no scheduling
       osc1.connect(gain);
       osc2.connect(gain);
-      gain.connect(dest); // → MediaStream, not ctx.destination
-      gain.gain.value = 0.0001;
+      gain.connect(dest);
       osc1.start();
       osc2.start();
+      // NO osc.stop(), NO gain scheduling — just continuous tone
 
-      // Gain envelope: 2s on / 4s off
-      const base = ctx.currentTime;
-      for (let i = 0; i < 30; i++) {
-        gain.gain.setValueAtTime(0.15, base + i * 6);
-        gain.gain.setValueAtTime(0.0001, base + i * 6 + 2);
-      }
-
-      // Pipe through audioRef (SIP element) — Chrome routes srcObject
-      // through the communications device (same as WebRTC call audio)
       if (audioRef.current) {
         audioRef.current.srcObject = dest.stream;
         audioRef.current.play().catch(() => {});
       }
-      log("Ringback playing via audioRef.srcObject");
+
+      // Log state every 2 seconds to monitor
+      const monitor = setInterval(() => {
+        if (!ringbackPlayingRef.current) { clearInterval(monitor); return; }
+        log(`Ring monitor: ctx=${ctx.state} time=${ctx.currentTime.toFixed(1)}`);
+      }, 2000);
+
+      log("Ringback DIAGNOSTIC: continuous tone via audioRef.srcObject");
     } catch (e: any) {
       log("Ringback error: " + e.message);
     }
