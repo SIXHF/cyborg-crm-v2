@@ -72,14 +72,19 @@ export function DataManagerClient({ total, statusMap, batches, duplicates, agent
 
         if (data.done) {
           // Reindex after large delete to fix index bloat/fragmentation
-          setProgress(p => ({ ...p, label: "Rebuilding indexes..." }));
+          setProgress(p => ({ ...p, label: "Rebuilding indexes (1-3 min)...", pct: 99, speed: 0, eta: "~1-3 min" }));
           try {
+            const reindexStart = Date.now();
             await fetch("/api/admin/data-manager", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ action: "reindex" }),
             });
-          } catch {}
+            const reindexSec = ((Date.now() - reindexStart) / 1000).toFixed(0);
+            setProgress(p => ({ ...p, label: `Complete! (reindex took ${reindexSec}s)`, pct: 100, eta: "" }));
+          } catch {
+            setProgress(p => ({ ...p, label: "Complete! (reindex may still be running)", pct: 100, eta: "" }));
+          }
           setTimeout(() => router.refresh(), 1500);
           break;
         }
