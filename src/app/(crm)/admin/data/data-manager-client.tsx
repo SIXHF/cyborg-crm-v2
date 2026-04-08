@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, AlertTriangle, Database, Loader2, Phone, Hash, RotateCcw, FileText } from "lucide-react";
+import { Trash2, AlertTriangle, Database, Loader2, Phone, Hash, RotateCcw, FileText, X } from "lucide-react";
 
 interface Props {
   total: number;
@@ -15,23 +15,33 @@ interface Props {
 export function DataManagerClient({ total, statusMap, batches, duplicates, agents = [] }: Props) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState({ label: "", deleted: 0, remaining: 0, pct: 0 });
+  const [progress, setProgress] = useState({ label: "", deleted: 0, remaining: 0, pct: 0, speed: 0, eta: "" });
   const [confirmText, setConfirmText] = useState("");
+  const cancelledRef = useRef(false);
+  const startTimeRef = useRef(0);
   const [ageDays, setAgeDays] = useState("90");
   const [selectedAgent, setSelectedAgent] = useState("");
   const [refNumbers, setRefNumbers] = useState("");
+
+  function formatTime(seconds: number) {
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  }
 
   async function runBatchDelete(action: string, params: Record<string, string> = {}, desc: string) {
     if (running) return;
     if (!confirm(`FINAL WARNING\n\nYou are about to: ${desc}\n\nThis is PERMANENT and cannot be undone.\n\nClick OK to proceed.`)) return;
 
     setRunning(true);
-    setProgress({ label: "Starting...", deleted: 0, remaining: 0, pct: 0 });
+    cancelledRef.current = false;
+    startTimeRef.current = Date.now();
+    setProgress({ label: "Starting...", deleted: 0, remaining: 0, pct: 0, speed: 0, eta: "" });
     let totalDeleted = 0;
     let initial: number | null = null;
 
     try {
-      while (true) {
+      while (!cancelledRef.current) {
         const res = await fetch("/api/admin/data-manager", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -47,17 +57,26 @@ export function DataManagerClient({ total, statusMap, batches, duplicates, agent
         if (initial === null) initial = totalDeleted + data.remaining;
         const pct = initial! > 0 ? Math.round(((initial! - data.remaining) / initial!) * 100) : 100;
 
+        const elapsed = (Date.now() - startTimeRef.current) / 1000;
+        const speed = elapsed > 0 ? Math.round(totalDeleted / elapsed) : 0;
+        const etaSec = speed > 0 ? data.remaining / speed : 0;
+
         setProgress({
-          label: data.done ? "Complete!" : "Deleting...",
+          label: data.done ? "Complete!" : cancelledRef.current ? "Cancelled" : "Deleting...",
           deleted: totalDeleted,
           remaining: data.remaining,
           pct,
+          speed,
+          eta: etaSec > 0 ? formatTime(etaSec) : "--",
         });
 
         if (data.done) {
           setTimeout(() => router.refresh(), 1500);
           break;
         }
+      }
+      if (cancelledRef.current) {
+        setProgress(p => ({ ...p, label: "Cancelled" }));
       }
     } catch (e: any) {
       setProgress((p) => ({ ...p, label: `Error: ${e.message}` }));
@@ -97,20 +116,35 @@ export function DataManagerClient({ total, statusMap, batches, duplicates, agent
     <div className="p-6 space-y-6">
       {/* Progress bar */}
       {(running || progress.deleted > 0) && (
-        <div className="bg-card border border-primary/30 rounded-xl p-4">
-          <div className="flex items-center gap-3 mb-2">
+        <div className="bg-card border border-primary/30 rounded-xl p-4 space-y-2">
+          <div className="flex items-center gap-3">
             {running && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
             <span className="text-sm font-medium">{progress.label}</span>
-            <span className="ml-auto text-sm text-muted-foreground">
-              {progress.deleted.toLocaleString()} affected
-              {progress.remaining > 0 && `, ${progress.remaining.toLocaleString()} remaining`}
-            </span>
+            {running && (
+              <button
+                onClick={() => { cancelledRef.current = true; }}
+                className="ml-auto h-7 px-3 text-xs text-destructive border border-destructive/30 rounded-lg hover:bg-destructive/10 flex items-center gap-1"
+              >
+                <X className="w-3 h-3" /> Cancel
+              </button>
+            )}
           </div>
           <div className="h-2 bg-muted rounded-full overflow-hidden">
             <div
               className="h-full bg-primary rounded-full transition-all duration-300"
               style={{ width: `${Math.max(progress.pct, 2)}%` }}
             />
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>
+              {progress.deleted.toLocaleString()} deleted
+              {progress.remaining > 0 && ` · ${progress.remaining.toLocaleString()} remaining`}
+            </span>
+            <span>
+              {progress.speed > 0 && `${progress.speed.toLocaleString()}/s`}
+              {progress.eta && progress.eta !== "--" && ` · ETA ${progress.eta}`}
+              {progress.pct > 0 && ` · ${progress.pct}%`}
+            </span>
           </div>
         </div>
       )}
