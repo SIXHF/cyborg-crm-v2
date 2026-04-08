@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { leads, leadCards, leadCosigners, leadEmployers, leadVehicles, leadRelatives, leadAddresses, leadEmails, leadLicenses, leadComments, leadAttachments, leadFollowups, leadViews, callQueue, callLog, collabEvents } from "@/lib/db/schema";
 import { eq, sql, and, lt, inArray } from "drizzle-orm";
 
-const BATCH = 5000;
+const BATCH = 50000;
 
 const CHILD_TABLES = [
   leadCards, leadCosigners, leadEmployers, leadVehicles, leadRelatives,
@@ -26,17 +26,20 @@ async function batchDeleteIds(ids: number[]) {
 }
 
 async function batchDeleteWhere(where: any): Promise<{ deleted: number; remaining: number }> {
+  // Get IDs to delete (limited batch)
   const ids = await db.select({ id: leads.id }).from(leads).where(where).limit(BATCH);
   if (!ids.length) return { deleted: 0, remaining: 0 };
 
-  const deleted = await batchDeleteIds(ids.map((r) => r.id));
+  // Direct DELETE with CASCADE — foreign keys handle child tables automatically
+  // No need to manually delete from each child table
+  await db.delete(leads).where(inArray(leads.id, ids.map(r => r.id)));
 
   // Check if more remain
   if (ids.length >= BATCH) {
     const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(leads).where(where);
-    return { deleted, remaining: count };
+    return { deleted: ids.length, remaining: count };
   }
-  return { deleted, remaining: 0 };
+  return { deleted: ids.length, remaining: 0 };
 }
 
 export async function POST(req: NextRequest) {
@@ -73,11 +76,24 @@ export async function POST(req: NextRequest) {
       }
 
       case "delete_by_import_ref": {
-        const result = await batchDeleteWhere(eq(leads.importRef, body.importRef));
-        if (result.deleted && result.remaining === 0) {
-          await audit(user.id, user.username, "data_manager", "admin", undefined, `Deleted leads with import_ref: ${body.importRef}`);
+        // Direct DELETE with CASCADE — foreign keys handle child tables automatically
+        // Much faster than selecting IDs then deleting from each child table
+        const [{ count }] = await db.select({ count: sql<number>`count(*)` }).from(leads).where(eq(leads.importRef, body.importRef));
+        if (count === 0) return NextResponse.json({ done: true, deleted: 0, remaining: 0 });
+
+        // Delete in large batches using raw SQL for speed
+        const deleteResult = await db.execute(sql`
+          DELETE FROM leads WHERE id IN (
+            SELECT id FROM leads WHERE import_ref = ${body.importRef} LIMIT ${BATCH}
+          )
+        `);
+        const deleted = (deleteResult as any)?.rowCount || BATCH;
+        const remaining = Math.max(0, Number(count) - deleted);
+
+        if (remaining === 0) {
+          await audit(user.id, user.username, "data_manager", "admin", undefined, `Deleted ${count} leads with import_ref: ${body.importRef}`);
         }
-        return NextResponse.json({ done: result.remaining === 0, ...result });
+        return NextResponse.json({ done: remaining === 0, deleted, remaining });
       }
 
       case "delete_duplicates": {
