@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Search, Filter, ChevronLeft, ChevronRight, Plus, Download, Trash2, Phone, Eye, ExternalLink, X, Loader2, CreditCard } from "lucide-react";
 import { cn, formatPhone, timeAgo } from "@/lib/utils";
@@ -58,9 +58,8 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
   const [quickViewData, setQuickViewData] = useState<any>(null);
   const [quickViewLoading, setQuickViewLoading] = useState(false);
 
-  // Reset searching state when results arrive (page re-rendered with new data)
-  const searchParams = useSearchParams();
-  useState(() => { setSearching(false); });
+  // Reset searching state when results arrive (new props = page re-rendered)
+  useEffect(() => { setSearching(false); }, [leads]);
 
   async function openQuickView(e: React.MouseEvent, leadId: number) {
     e.stopPropagation();
