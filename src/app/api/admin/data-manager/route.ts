@@ -200,6 +200,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ done: true, deleted: 0, remaining: 0 });
       }
 
+      case "reindex": {
+        // Rebuild indexes after large deletes to fix bloat/fragmentation
+        // REINDEX CONCURRENTLY doesn't block reads
+        await db.execute(sql.raw(`REINDEX TABLE CONCURRENTLY leads`));
+        return NextResponse.json({ done: true, message: "Indexes rebuilt" });
+      }
+
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

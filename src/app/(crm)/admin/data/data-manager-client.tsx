@@ -71,6 +71,15 @@ export function DataManagerClient({ total, statusMap, batches, duplicates, agent
         });
 
         if (data.done) {
+          // Reindex after large delete to fix index bloat/fragmentation
+          setProgress(p => ({ ...p, label: "Rebuilding indexes..." }));
+          try {
+            await fetch("/api/admin/data-manager", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "reindex" }),
+            });
+          } catch {}
           setTimeout(() => router.refresh(), 1500);
           break;
         }
