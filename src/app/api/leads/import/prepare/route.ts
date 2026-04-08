@@ -17,6 +17,12 @@ export async function POST(req: NextRequest) {
     const { jobId } = await req.json();
     if (!jobId) return NextResponse.json({ error: "Missing jobId" }, { status: 400 });
 
+    // Clean up stale jobs stuck in 'running' for over 30 minutes
+    await rawSql`
+      UPDATE import_jobs SET status = 'error'
+      WHERE status = 'running' AND created_at < NOW() - INTERVAL '30 minutes'
+    `;
+
     // Check for concurrent imports
     const running = await rawSql`
       SELECT id FROM import_jobs WHERE status = 'running' AND id != ${jobId} LIMIT 1
