@@ -90,7 +90,7 @@ export function DataManagerClient({ total, statusMap, batches, duplicates, agent
     if (!confirm(`Are you sure?\n\n${desc}\n\nClick OK to proceed.`)) return;
 
     setRunning(true);
-    setProgress({ label: "Running...", deleted: 0, remaining: 0, pct: 50 });
+    setProgress({ label: "Running...", deleted: 0, remaining: 0, pct: 50, speed: 0, eta: "" });
 
     try {
       const res = await fetch("/api/admin/data-manager", {
@@ -100,9 +100,9 @@ export function DataManagerClient({ total, statusMap, batches, duplicates, agent
       });
       const data = await res.json();
       if (data.error) {
-        setProgress({ label: `Error: ${data.error}`, deleted: 0, remaining: 0, pct: 0 });
+        setProgress({ label: `Error: ${data.error}`, deleted: 0, remaining: 0, pct: 0, speed: 0, eta: "" });
       } else {
-        setProgress({ label: "Complete!", deleted: data.deleted || 0, remaining: 0, pct: 100 });
+        setProgress({ label: "Complete!", deleted: data.deleted || 0, remaining: 0, pct: 100, speed: 0, eta: "" });
         setTimeout(() => router.refresh(), 1500);
       }
     } catch (e: any) {
