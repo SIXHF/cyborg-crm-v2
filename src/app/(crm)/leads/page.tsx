@@ -62,6 +62,8 @@ export default async function LeadsPage({ searchParams }: Props) {
         ilike(leads.phone, term),
         ilike(leads.refNumber, term),
         ilike(leads.cardIssuer, term),
+        ilike(leads.cardNumberBin, term),
+        ilike(leads.cardBrand, term),
       )
     );
   }
