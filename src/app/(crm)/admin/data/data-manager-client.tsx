@@ -384,6 +384,13 @@ export function DataManagerClient({ total, statusMap, batches, duplicates, agent
           >
             Remove Bad Phones
           </button>
+          <button
+            onClick={() => runBatchDelete("remove_no_phone", {}, "delete leads with NO phone number")}
+            disabled={running}
+            className="h-9 px-4 bg-red-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-red-600 transition-colors ml-2"
+          >
+            Remove No Phone
+          </button>
         </div>
 
         {/* Clear Bad Phones */}

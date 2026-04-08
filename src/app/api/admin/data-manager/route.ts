@@ -167,6 +167,17 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ done: result.remaining === 0, ...result });
       }
 
+      case "remove_no_phone": {
+        // Delete leads with no phone number at all
+        const result = await batchDeleteWhere(
+          sql`(${leads.phone} IS NULL OR ${leads.phone} = '')`
+        );
+        if (result.deleted && result.remaining === 0) {
+          await audit(user.id, user.username, "data_manager", "admin", undefined, `Removed leads with no phone number`);
+        }
+        return NextResponse.json({ done: result.remaining === 0, ...result });
+      }
+
       case "remove_bad_phones": {
         const result = await batchDeleteWhere(
           sql`${leads.phone} IS NOT NULL AND ${leads.phone} != '' AND (LENGTH(${leads.phone}) < 10 OR LENGTH(${leads.phone}) > 15)`
