@@ -11,7 +11,7 @@ import { randomBytes } from "crypto";
 export const maxDuration = 300;
 
 const CHUNK_SIZE = 50000;
-const BATCH_SIZE = 5000;
+const BATCH_SIZE = 10000;
 
 // ── Module-level BIN cache (loaded once, reused across chunks) ──
 let binLookupCache: Map<string, { brand: string | null; type: string | null; issuer: string | null; country: string | null }> | null = null;
@@ -339,7 +339,14 @@ export async function POST(req: NextRequest) {
       "notes", "status", "agent_id", "import_ref",
     ];
 
-    // Process in batches using raw postgres client (bypasses Drizzle entirely)
+    // Reserve a dedicated connection for session-level tuning
+    const conn = await rawSql.reserve();
+    try {
+    // Session-level tuning (only affects this connection)
+    await conn.unsafe("SET synchronous_commit = OFF");
+    await conn.unsafe("SET maintenance_work_mem = '512MB'");
+
+    // Process in batches using reserved connection
     for (let b = 0; b < leadRows.length; b += BATCH_SIZE) {
       const batch = leadRows.slice(b, b + BATCH_SIZE);
       const hasCards = batch.some(r => cardDataByRef.has(r.refNumber));
@@ -354,8 +361,8 @@ export async function POST(req: NextRequest) {
 
         const insertQuery = `INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valueRows.join(",")} ON CONFLICT DO NOTHING${hasCards ? " RETURNING id, ref_number" : ""}`;
 
-        // Use raw postgres client — no Drizzle overhead, no param confusion
-        const result = await rawSql.unsafe(insertQuery);
+        // Use reserved connection with session tuning
+        const result = await conn.unsafe(insertQuery);
         chunkImported += batch.length;
 
         // Insert card records using returned IDs
@@ -369,7 +376,7 @@ export async function POST(req: NextRequest) {
             }
           }
           if (cardValues.length > 0) {
-            await rawSql.unsafe(`INSERT INTO lead_cards (lead_id,ccn,cvc,exp_date,noc,bank,card_type,credit_limit) VALUES ${cardValues.join(",")} ON CONFLICT DO NOTHING`);
+            await conn.unsafe(`INSERT INTO lead_cards (lead_id,ccn,cvc,exp_date,noc,bank,card_type,credit_limit) VALUES ${cardValues.join(",")} ON CONFLICT DO NOTHING`);
           }
         }
       } catch (e: any) {
@@ -378,6 +385,12 @@ export async function POST(req: NextRequest) {
         chunkImported += result.imported;
         chunkFailed += result.failed;
       }
+    }
+    } finally {
+      // Reset session settings and release connection back to pool
+      try { await conn.unsafe("SET synchronous_commit = ON"); } catch {}
+      try { await conn.unsafe("RESET maintenance_work_mem"); } catch {}
+      (conn as any).release();
     }
 
     // ── Update job progress (atomic increment for parallel safety) ──

@@ -29,7 +29,7 @@ interface Props {
   nextCursor: number | null;
   prevCursor: number | null;
   agents: { id: number; fullName: string }[];
-  filters: Record<string, string | undefined>;
+  filters: Record<string, string | undefined> & { name?: string; phone?: string; bin?: string; bank?: string; email?: string };
   userRole: string;
 }
 
@@ -44,14 +44,23 @@ const statusColors: Record<string, string> = {
 
 export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, filters, userRole }: Props) {
   const router = useRouter();
-  const [search, setSearch] = useState(filters.q || "");
+  const [searchName, setSearchName] = useState(filters.name || "");
+  const [searchPhone, setSearchPhone] = useState(filters.phone || "");
+  const [searchBin, setSearchBin] = useState(filters.bin || "");
+  const [searchBank, setSearchBank] = useState(filters.bank || "");
+  const [searchEmail, setSearchEmail] = useState(filters.email || "");
   const [showFilters, setShowFilters] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [queuingLeads, setQueuingLeads] = useState<Set<number>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
   const [quickViewId, setQuickViewId] = useState<number | null>(null);
   const [quickViewData, setQuickViewData] = useState<any>(null);
   const [quickViewLoading, setQuickViewLoading] = useState(false);
+
+  // Reset searching state when results arrive (page re-rendered with new data)
+  const searchParams = useSearchParams();
+  useState(() => { setSearching(false); });
 
   async function openQuickView(e: React.MouseEvent, leadId: number) {
     e.stopPropagation();
@@ -71,12 +80,24 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
     Object.entries(merged).forEach(([k, v]) => {
       if (v && v !== "") sp.set(k, v);
     });
+    setSearching(true);
     router.push(`/leads?${sp.toString()}`);
   }
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    navigate({ q: search, cursor: "", dir: "" });
+    if (searching) return; // prevent double-submit
+    navigate({
+      name: searchName, phone: searchPhone, bin: searchBin,
+      bank: searchBank, email: searchEmail,
+      q: "", cursor: "", dir: "",
+    });
+  }
+
+  function clearSearch() {
+    setSearchName(""); setSearchPhone(""); setSearchBin("");
+    setSearchBank(""); setSearchEmail("");
+    navigate({ name: "", phone: "", bin: "", bank: "", email: "", q: "", cursor: "", dir: "" });
   }
 
   function toggleAll() {
@@ -87,21 +108,57 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
     }
   }
 
+  const hasSearch = !!(searchName || searchPhone || searchBin || searchBank || searchEmail);
+
   return (
     <div className="p-6 space-y-4">
+      {/* Search fields */}
+      <form onSubmit={handleSearch} className="bg-card border border-border rounded-xl p-4 space-y-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Name</label>
+            <input type="text" value={searchName} onChange={e => setSearchName(e.target.value)}
+              placeholder="First or last name" className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Phone</label>
+            <input type="text" value={searchPhone} onChange={e => setSearchPhone(e.target.value)}
+              placeholder="Phone number" className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">BIN</label>
+            <input type="text" value={searchBin} onChange={e => setSearchBin(e.target.value)}
+              placeholder="Card BIN (e.g. 519731)" className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Bank / Brand</label>
+            <input type="text" value={searchBank} onChange={e => setSearchBank(e.target.value)}
+              placeholder="Bank or card brand" className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Email</label>
+            <input type="text" value={searchEmail} onChange={e => setSearchEmail(e.target.value)}
+              placeholder="Email address" className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="submit" disabled={searching || !hasSearch}
+            className="h-9 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 disabled:opacity-50">
+            {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            {searching ? "Searching..." : "Search"}
+          </button>
+          {hasSearch && (
+            <button type="button" onClick={clearSearch}
+              className="h-9 px-3 text-sm text-destructive hover:bg-destructive/10 rounded-lg">
+              Clear
+            </button>
+          )}
+        </div>
+      </form>
+
       {/* Top bar */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex items-center gap-3">
-          <form onSubmit={handleSearch} className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search leads…"
-              className="w-64 h-9 pl-9 pr-3 bg-muted border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </form>
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={cn(

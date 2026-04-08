@@ -11,6 +11,11 @@ export const dynamic = "force-dynamic";
 interface Props {
   searchParams: Promise<{
     q?: string;
+    name?: string;
+    phone?: string;
+    bin?: string;
+    bank?: string;
+    email?: string;
     status?: string;
     agent?: string;
     from?: string;
@@ -51,7 +56,27 @@ export default async function LeadsPage({ searchParams }: Props) {
     // vis === "all" — no filter needed
   }
 
-  // Search
+  // Dedicated search fields — each queries only its indexed column
+  if (params.name && params.name.trim().length >= 2) {
+    const term = `%${params.name.trim()}%`;
+    conditions.push(or(ilike(leads.firstName, term), ilike(leads.lastName, term)));
+  }
+  if (params.phone && params.phone.trim().length >= 3) {
+    const digits = params.phone.trim().replace(/\D/g, "");
+    if (digits.length >= 3) conditions.push(ilike(leads.phone, `%${digits}%`));
+  }
+  if (params.bin && params.bin.trim().length >= 4) {
+    // BIN prefix match — CAN use B-tree index (no leading wildcard)
+    conditions.push(sql`${leads.cardNumberBin} LIKE ${params.bin.trim() + "%"}`);
+  }
+  if (params.bank && params.bank.trim().length >= 2) {
+    const term = `%${params.bank.trim()}%`;
+    conditions.push(or(ilike(leads.cardIssuer, term), ilike(leads.cardBrand, term)));
+  }
+  if (params.email && params.email.trim().length >= 3) {
+    conditions.push(ilike(leads.email, `%${params.email.trim()}%`));
+  }
+  // Legacy "search all" fallback
   if (params.q && params.q.trim().length >= 2) {
     const term = `%${params.q.trim()}%`;
     conditions.push(

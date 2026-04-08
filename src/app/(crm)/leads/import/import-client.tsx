@@ -118,7 +118,9 @@ export function ImportClient() {
     }
   }
 
-  // Step 3: Start parallel chunked import
+  const [importPhase, setImportPhase] = useState<"preparing" | "importing" | "finalizing" | "">("");
+
+  // Step 3: Start parallel chunked import with index management
   async function startImport() {
     if (!uploadResult) return;
     cancelledRef.current = false;
@@ -131,12 +133,39 @@ export function ImportClient() {
     });
 
     try {
+      // Phase 1: Drop indexes for faster inserts
+      setImportPhase("preparing");
+      const prepRes = await fetch("/api/leads/import/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: uploadResult.jobId }),
+      });
+      if (!prepRes.ok) {
+        const data = await prepRes.json().catch(() => ({ error: "Prepare failed" }));
+        throw new Error(data.error || "Failed to prepare database");
+      }
+
+      // Phase 2: Import chunks
+      setImportPhase("importing");
       await processChunksParallel(uploadResult.jobId, uploadResult.totalRows);
     } catch (e: any) {
       if (!cancelledRef.current) {
         setError(e.message);
         setStep("error");
       }
+    } finally {
+      // Phase 3: Always recreate indexes, even on error/cancel
+      setImportPhase("finalizing");
+      try {
+        await fetch("/api/leads/import/finalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: uploadResult.jobId }),
+        });
+      } catch {
+        console.error("Failed to recreate indexes after import");
+      }
+      setImportPhase("");
     }
   }
 
@@ -403,7 +432,11 @@ export function ImportClient() {
       {step === "importing" && (
         <div className="bg-card border border-border rounded-xl p-5 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-lg">Importing...</h3>
+            <h3 className="font-semibold text-lg">
+              {importPhase === "preparing" ? "Preparing database..." :
+               importPhase === "finalizing" ? "Rebuilding indexes..." :
+               "Importing..."}
+            </h3>
             <button
               onClick={handleCancel}
               className="h-8 px-3 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg flex items-center gap-1.5"
@@ -445,7 +478,11 @@ export function ImportClient() {
           </div>
 
           {stats.chunkMs > 0 && (
-            <p className="text-xs text-muted-foreground">Last chunk: {stats.chunkMs}ms | {PARALLEL_CHUNKS} parallel workers</p>
+            <p className="text-xs text-muted-foreground">
+              {importPhase === "preparing" ? "Dropping indexes for faster import..." :
+               importPhase === "finalizing" ? "Recreating search indexes (this may take a minute)..." :
+               `Last chunk: ${stats.chunkMs}ms | ${PARALLEL_CHUNKS} parallel workers`}
+            </p>
           )}
         </div>
       )}
