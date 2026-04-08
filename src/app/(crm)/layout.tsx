@@ -1,5 +1,6 @@
 import { requireAuth } from "@/lib/auth";
 import { Sidebar } from "@/components/sidebar";
+import { PresenceHeartbeat } from "@/components/presence-heartbeat";
 
 export default async function CrmLayout({
   children,
@@ -14,6 +15,7 @@ export default async function CrmLayout({
       <main className="flex-1 overflow-y-auto">
         {children}
       </main>
+      <PresenceHeartbeat />
     </div>
   );
 }

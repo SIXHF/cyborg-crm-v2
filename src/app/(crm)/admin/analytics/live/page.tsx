@@ -11,20 +11,25 @@ export const dynamic = "force-dynamic";
 export default async function LiveAnalyticsPage() {
   const user = await requireAuth(["admin"]);
 
-  // Active sessions (users online now)
-  const activeSessions = await db
+  // Online users (active in last 90 seconds via presence heartbeat)
+  const presenceCutoff = new Date(Date.now() - 90 * 1000);
+  const onlineUsers = await db
     .select({
-      userId: sessions.userId,
-      username: users.username,
+      userId: userPresence.userId,
       fullName: users.fullName,
+      username: users.username,
       role: users.role,
-      ipAddress: sessions.ipAddress,
-      createdAt: sessions.createdAt,
+      module: userPresence.module,
+      action: userPresence.action,
+      leadName: userPresence.leadName,
+      pageUrl: userPresence.pageUrl,
+      ip: userPresence.ip,
+      lastSeen: userPresence.lastSeen,
     })
-    .from(sessions)
-    .innerJoin(users, eq(sessions.userId, users.id))
-    .where(gte(sessions.expiresAt, new Date()))
-    .orderBy(desc(sessions.createdAt));
+    .from(userPresence)
+    .innerJoin(users, eq(userPresence.userId, users.id))
+    .where(gte(userPresence.lastSeen, presenceCutoff))
+    .orderBy(desc(userPresence.lastSeen));
 
   // Recent calls (last 24 hours)
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -119,7 +124,7 @@ export default async function LiveAnalyticsPage() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center gap-2 mb-1"><Wifi className="w-4 h-4 text-green-500" /><span className="text-xs text-muted-foreground">Online Now</span></div>
-            <p className="text-3xl font-bold text-green-500">{activeSessions.length}</p>
+            <p className="text-3xl font-bold text-green-500">{onlineUsers.length}</p>
           </div>
           <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center gap-2 mb-1"><Phone className="w-4 h-4 text-blue-500" /><span className="text-xs text-muted-foreground">Calls Today</span></div>
@@ -144,27 +149,30 @@ export default async function LiveAnalyticsPage() {
           <div className="bg-card border border-border rounded-xl p-5">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" />
-              Users Online ({activeSessions.length})
+              Users Online ({onlineUsers.length})
             </h2>
-            {activeSessions.length === 0 ? (
-              <p className="text-muted-foreground text-sm py-4 text-center">No active sessions</p>
+            {onlineUsers.length === 0 ? (
+              <p className="text-muted-foreground text-sm py-4 text-center">No users online</p>
             ) : (
               <div className="space-y-2">
-                {activeSessions.map((s, i) => (
+                {onlineUsers.map((u, i) => (
                   <div key={i} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                     <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 bg-green-500 rounded-full" />
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                       <div>
-                        <p className="text-sm font-medium">{s.fullName}</p>
-                        <p className="text-xs text-muted-foreground">{s.username}</p>
+                        <p className="text-sm font-medium">{u.fullName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {u.module && u.action ? `${u.action} ${u.module}` : u.username}
+                          {u.leadName && ` — ${u.leadName}`}
+                        </p>
                       </div>
-                      <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium", roleColors[s.role])}>
-                        {s.role}
+                      <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium", roleColors[u.role])}>
+                        {u.role}
                       </span>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-muted-foreground font-mono">{s.ipAddress}</p>
-                      <p className="text-xs text-muted-foreground">{timeAgo(s.createdAt)}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{u.ip}</p>
+                      <p className="text-xs text-muted-foreground">{u.lastSeen ? timeAgo(u.lastSeen) : ""}</p>
                     </div>
                   </div>
                 ))}
