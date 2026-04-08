@@ -260,6 +260,55 @@ npm run lint       # ESLint
 - **JSONB custom fields** — no join table needed, indexed
 - **TRUNCATE CASCADE** — instant delete-all operations
 
+## Critical Performance Rules (MUST follow)
+
+### Bulk Import
+- **ALWAYS drop indexes before bulk import**, recreate after with CONCURRENTLY
+- Use `/api/leads/import/prepare` (drops indexes) and `/api/leads/import/finalize` (recreates)
+- The GIN trigram index is the most expensive — accounts for 40-60% of insert overhead
+- Session-level tuning: `SET synchronous_commit = OFF` + `SET maintenance_work_mem = '512MB'`
+- Use `rawSql.reserve()` for session-level settings (pool connections don't persist SET)
+- Batch size: 10K rows per INSERT statement
+- Chunk size: 50K rows per API request, 4 parallel workers
+
+### Bulk Delete
+- **ALWAYS REINDEX after large deletes** — deletes leave index pages fragmented
+- Use `REINDEX TABLE CONCURRENTLY leads` (non-blocking)
+- The data manager auto-reindexes after batch deletes
+- Use CASCADE via foreign keys — don't manually delete from child tables
+- Batch size: 50K rows per DELETE request
+
+### Search at Scale (2M+ rows)
+- **NEVER use `ILIKE %term%` across multiple columns** — forces sequential scan
+- Use **dedicated search fields** that each query only their indexed column
+- BIN search: use `LIKE 'prefix%'` (not `%prefix%`) — uses B-tree index
+- Name search: uses composite index `(last_name, first_name)`
+- Always debounce search to prevent multiple concurrent queries
+
+### Index Management
+- 10 B-tree indexes + GIN trigram on `leads` table
+- Indexes slow writes (10x overhead at 20M rows) but speed reads
+- After ANY bulk operation (import/delete), verify indexes are intact:
+  `SELECT indexname FROM pg_indexes WHERE tablename = 'leads'`
+- If indexes are missing: call `/api/leads/import/finalize` or run REINDEX
+
+### WebRTC / SIP.js Softphone
+- Chrome on Windows **mutes ALL local audio** (AudioContext, `<audio>`, MediaStream, iframe) during WebRTC calls
+- This is caused by Windows Communications Activity Detection + Chrome's WebRTC audio processing
+- **No JavaScript workaround exists** — only server-side early media or Electron wrapper
+- Current solution: visual ringing indicator (pulsing animation + border flash)
+- Future: Electron wrapper with native audio, or Magnus Billing early media configuration
+- SIP.js SimpleUser `onCallCreated` fires BEFORE `getUserMedia` (inside `initSession`)
+- `earlyMedia: true` causes false "Call answered" on 183 — don't use unless server sends audio
+- Always clean up stale sessions before new call: `simpleUser.hangup()` + 200ms delay
+
+### General Rules
+- Always run `npx next build` and verify no TypeScript errors before pushing
+- Test all edge cases: first call, second call, manual dial, auto-dialer, call rejection
+- When modifying state in React, use refs for values accessed in SIP.js delegate callbacks (closures capture stale state)
+- Multiple SIP.js handlers fire for the same event (onCallHangup, Terminated, onReject) — ensure idempotent handling
+- Railway deployments take 1-2 minutes — verify deploy completed before testing
+
 ## Migration from PHP v1
 - Original PHP CRM: `SIXHF/cyborg-crm` (75 PHP files, MySQL)
 - This is a full rewrite — same features, new architecture
