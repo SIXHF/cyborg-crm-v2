@@ -260,6 +260,18 @@ npm run lint       # ESLint
 - **JSONB custom fields** — no join table needed, indexed
 - **TRUNCATE CASCADE** — instant delete-all operations
 
+## Development Mindset (ALWAYS follow)
+
+Before implementing ANY change, think through:
+1. **Side effects**: What else does this action affect? (e.g., dropping indexes affects search speed, getUserMedia affects audio playback, deleting data fragments indexes)
+2. **Scale impact**: How does this behave with 20M rows? Will it timeout? Will it lock tables?
+3. **Cleanup/recovery**: If this fails mid-way, what state is left? How do we recover? (e.g., indexes dropped but not recreated, stale SIP sessions)
+4. **Concurrency**: What if two users do this simultaneously? What if the same user clicks twice?
+5. **State management**: In React, are delegate callbacks capturing stale state? Use refs for values accessed in async/SIP callbacks.
+6. **Testing ALL paths**: Test first use, second use, error case, cancel case, edge cases. Don't assume "it works" from one test.
+7. **Build before push**: ALWAYS run `npx next build` and verify zero TypeScript errors before pushing.
+8. **Don't guess — research**: If unsure how a browser API or library works, read the source code or documentation before trying random approaches.
+
 ## Critical Performance Rules (MUST follow)
 
 ### Bulk Import
