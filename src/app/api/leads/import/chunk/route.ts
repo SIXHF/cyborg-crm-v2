@@ -187,7 +187,9 @@ export async function POST(req: NextRequest) {
     if (chunkOffsets && chunkOffsets.length > effectiveChunkIndex) {
       // Fast path: read only the bytes for this chunk
       const startByte = chunkOffsets[effectiveChunkIndex];
-      const endByte = effectiveChunkIndex + 1 < chunkOffsets.length ? chunkOffsets[effectiveChunkIndex + 1] - 1 : null;
+      // Don't subtract 1 — the next chunk's start byte is the byte AFTER our last newline
+      // Subtracting 1 truncates the last character of the last line in each chunk
+      const endByte = effectiveChunkIndex + 1 < chunkOffsets.length ? chunkOffsets[effectiveChunkIndex + 1] : null;
       const chunkText = await readFileRange(filePath, startByte, endByte);
       chunkLines = chunkText.split(/\r?\n/).filter(l => l.trim());
     } else {
