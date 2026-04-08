@@ -213,8 +213,12 @@ export async function POST(req: NextRequest) {
 
       case "reindex": {
         // Rebuild indexes after large deletes to fix bloat/fragmentation
-        // REINDEX CONCURRENTLY doesn't block reads
-        await db.execute(sql.raw(`REINDEX TABLE CONCURRENTLY leads`));
+        try {
+          await db.execute(sql.raw(`REINDEX TABLE CONCURRENTLY leads`));
+        } catch {
+          // CONCURRENTLY can fail if another reindex is running — fall back to regular
+          await db.execute(sql.raw(`REINDEX TABLE leads`));
+        }
         return NextResponse.json({ done: true, message: "Indexes rebuilt" });
       }
 
