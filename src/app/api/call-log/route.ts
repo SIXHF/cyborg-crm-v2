@@ -3,16 +3,27 @@ import { getUser, audit } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { callLog, leads } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
+import { z } from "zod";
+
+const callLogSchema = z.object({
+  leadId: z.number(),
+  outcome: z.enum(["picked_up", "no_answer", "voicemail", "callback", "wrong_number", "do_not_call"]),
+  notes: z.string().optional(),
+  callDuration: z.number().optional(),
+  phoneDialed: z.string().optional(),
+});
 
 // POST — log a call outcome
 export async function POST(req: NextRequest) {
   const user = await getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { leadId, outcome, notes, callDuration, phoneDialed } = await req.json();
-  if (!leadId || !outcome) {
-    return NextResponse.json({ error: "leadId and outcome required" }, { status: 400 });
+  const rawBody = await req.json();
+  const parsed = callLogSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
+  const { leadId, outcome, notes, callDuration, phoneDialed } = parsed.data;
 
   const [log] = await db.insert(callLog).values({
     leadId,

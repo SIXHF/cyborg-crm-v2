@@ -7,7 +7,7 @@ import {
   User, CreditCard, MessageSquare, Paperclip, Clock, Phone,
   MapPin, Mail, Briefcase, Car, Users as UsersIcon, Shield, ArrowLeft,
   Edit, Save, X, PhoneForwarded, Send, Trash2, CheckCircle, Plus,
-  Search, Loader2,
+  Search, Loader2, FileText,
 } from "lucide-react";
 import { cn, formatPhone, timeAgo } from "@/lib/utils";
 
@@ -596,6 +596,15 @@ export function LeadDetailClient({ data, currentUser }: Props) {
             <ArrowLeft className="w-4 h-4 rotate-180" />
             <span className="hidden sm:inline">Forward</span>
           </button>
+          <a
+            href={`/api/leads/${lead.id}/pdf`}
+            target="_blank"
+            className="h-9 px-3 bg-muted border border-border text-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-muted/80 transition-colors"
+            title="Download PDF"
+          >
+            <FileText className="w-4 h-4" />
+            <span className="hidden sm:inline">PDF</span>
+          </a>
           <Link
             href={`/leads/${lead.id}/edit`}
             className="h-9 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-primary/90 transition-colors"

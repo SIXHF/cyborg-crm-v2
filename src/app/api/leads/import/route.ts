@@ -3,6 +3,7 @@ import { getUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { importJobs } from "@/lib/db/schema";
 import { writeFile } from "fs/promises";
+import Anthropic from "@anthropic-ai/sdk";
 
 // Allow large file uploads (250MB)
 export const config = {
@@ -124,6 +125,90 @@ export function detectColumnByContent(values: string[]): string | null {
   if (cvvCount > sample.length * 0.7) return "ccCvc";
 
   return null;
+}
+
+// ── AI-powered column mapping fallback (Claude API) ──
+const CRM_FIELDS = [
+  "firstName", "lastName", "email", "phone", "landline", "dob", "ssnLast4",
+  "mmn", "vpass", "county", "address", "city", "state", "zip", "country",
+  "annualIncome", "employmentStatus", "creditScoreRange", "requestedLimit",
+  "cardType", "cardNumberBin", "cardBrand", "cardIssuer", "ccNumber", "ccExp",
+  "ccCvc", "ccNoc", "ccBank", "ccLimit", "businessName", "businessEin",
+  "mortgageBank", "mortgagePayment", "notes", "fullName",
+];
+
+async function aiColumnMapping(
+  headers: string[],
+  sampleRows: string[][],
+  existingMapping: Record<number, string>
+): Promise<Record<number, string>> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return existingMapping;
+
+  const usedFields = new Set(Object.values(existingMapping));
+  const unmappedIndices = headers
+    .map((_, i) => i)
+    .filter((i) => !existingMapping[i]);
+
+  if (unmappedIndices.length === 0) return existingMapping;
+
+  const sampleDisplay = sampleRows
+    .slice(0, 5)
+    .map((row, i) => `Sample data row ${i + 1}: ${JSON.stringify(row)}`)
+    .join("\n");
+
+  const availableFields = CRM_FIELDS.filter((f) => !usedFields.has(f));
+
+  const prompt = `You are a CRM data expert. Map these CSV columns to CRM fields.
+
+CSV Headers: ${JSON.stringify(headers)}
+${sampleDisplay}
+
+Available CRM fields: ${availableFields.join(", ")}
+
+Already mapped columns (do NOT remap these): ${JSON.stringify(existingMapping)}
+
+Return ONLY a JSON object mapping column index (0-based) to field name.
+Example: {"0": "firstName", "1": "lastName", "3": "phone"}
+Only map columns you are confident about. Skip ambiguous ones.
+Do NOT map columns that are already mapped.`;
+
+  const client = new Anthropic({ apiKey });
+  const response = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 500,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (!textBlock || textBlock.type !== "text") return existingMapping;
+
+  // Extract JSON from the response (handle markdown code blocks)
+  let jsonStr = textBlock.text.trim();
+  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return existingMapping;
+  jsonStr = jsonMatch[0];
+
+  const aiMapping: Record<string, string> = JSON.parse(jsonStr);
+  const merged = { ...existingMapping };
+
+  for (const [idxStr, field] of Object.entries(aiMapping)) {
+    const idx = parseInt(idxStr, 10);
+    if (
+      isNaN(idx) ||
+      idx < 0 ||
+      idx >= headers.length ||
+      merged[idx] ||
+      !CRM_FIELDS.includes(field) ||
+      usedFields.has(field)
+    ) {
+      continue;
+    }
+    merged[idx] = field;
+    usedFields.add(field);
+  }
+
+  return merged;
 }
 
 // ── Simple CSV line parser that handles quoted fields ──
@@ -288,6 +373,20 @@ export async function POST(req: NextRequest) {
         if (nameCount > firstColSample.length * 0.5) {
           mapping[0] = "fullName";
         }
+      }
+    }
+
+    // Fallback: AI-powered column mapping when alias + content detection fail
+    if (Object.keys(mapping).length < 3 && headers.length >= 2) {
+      try {
+        const aiSampleRows: string[][] = [];
+        for (let i = 1; i <= Math.min(5, lines.length - 1); i++) {
+          aiSampleRows.push(parseLine(lines[i], delimiter).map((v) => v.trim()));
+        }
+        const aiResult = await aiColumnMapping(headers, aiSampleRows, mapping);
+        Object.assign(mapping, aiResult);
+      } catch {
+        // AI mapping failure should never block import — continue with existing mapping
       }
     }
 

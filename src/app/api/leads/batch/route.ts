@@ -3,6 +3,13 @@ import { getUser, audit } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { leads } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
+import { z } from "zod";
+
+const batchSchema = z.object({
+  ids: z.array(z.number().or(z.string())).min(1).max(10000),
+  action: z.enum(["update_status", "reassign", "delete"]),
+  value: z.string().optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,15 +20,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { ids, action, value } = await req.json();
-
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return NextResponse.json({ error: "ids array is required" }, { status: 400 });
+    const rawBody = await req.json();
+    const parsed = batchSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
     }
-
-    if (!["update_status", "reassign", "delete"].includes(action)) {
-      return NextResponse.json({ error: "Invalid action" }, { status: 400 });
-    }
+    const { ids, action, value } = parsed.data;
 
     const leadIds = ids.map((id: any) => parseInt(id));
 
