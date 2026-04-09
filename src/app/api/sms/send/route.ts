@@ -15,14 +15,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "phone and message are required" }, { status: 400 });
     }
 
-    // Get API key from app_settings, fall back to hardcoded key
+    // Get API key from app_settings — no hardcoded fallback
     const [setting] = await db
       .select()
       .from(appSettings)
       .where(eq(appSettings.key, "sms_api_key"))
       .limit(1);
 
-    const apiKey = setting?.value || "1346|hD1M1l971riq60KCKLViDRmsV5dUNuVRSHfvSM4n9cf0c4c1";
+    const apiKey = setting?.value;
+    if (!apiKey) {
+      return NextResponse.json({ error: "SMS API key not configured. Set 'sms_api_key' in Admin > Settings." }, { status: 500 });
+    }
 
     // Send via SkyTelecom API
     const response = await fetch("https://skytelecom.io/api/sms/send", {

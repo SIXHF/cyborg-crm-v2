@@ -310,6 +310,7 @@ export async function POST(req: NextRequest) {
         annualIncome: data.annualIncome?.replace(/[^0-9.]/g, "") || null,
         employmentStatus: data.employmentStatus || null,
         creditScoreRange: data.creditScoreRange || null,
+        requestedLimit: data.requestedLimit?.replace(/[^0-9.]/g, "") || null,
         notes: data.notes || null,
         status: "new",
         agentId: user.id,
@@ -337,7 +338,7 @@ export async function POST(req: NextRequest) {
       "dob", "ssn_last4", "mmn", "vpass", "county", "address", "city", "state", "zip", "country",
       "card_type", "card_number_bin", "card_number_masked", "card_brand", "card_issuer",
       "business_name", "business_ein", "mortgage_bank", "mortgage_payment",
-      "annual_income", "employment_status", "credit_score_range",
+      "annual_income", "employment_status", "credit_score_range", "requested_limit",
       "notes", "status", "agent_id", "import_ref",
     ];
 
@@ -358,7 +359,8 @@ export async function POST(req: NextRequest) {
         const valueRows = batch.map(r => {
           const mp = r.mortgagePayment;
           const ai = r.annualIncome;
-          return `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${esc(r.notes)},${esc(r.status)},${r.agentId},${esc(r.importRef)})`;
+          const rl = r.requestedLimit;
+          return `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${rl ? rl : "NULL"},${esc(r.notes)},${esc(r.status)},${r.agentId},${esc(r.importRef)})`;
         });
 
         const insertQuery = `INSERT INTO leads (${leadColumns.join(",")}) VALUES ${valueRows.join(",")} ON CONFLICT DO NOTHING${hasCards ? " RETURNING id, ref_number" : ""}`;

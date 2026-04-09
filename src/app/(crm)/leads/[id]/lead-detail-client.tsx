@@ -106,13 +106,20 @@ export function LeadDetailClient({ data, currentUser }: Props) {
     if (!commentText.trim()) return;
     setSaving(true);
     try {
-      await fetch(`/api/leads/${lead.id}/comments`, {
+      const res = await fetch(`/api/leads/${lead.id}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: commentText }),
       });
-      setCommentText("");
-      router.refresh();
+      if (res.ok) {
+        setCommentText("");
+        router.refresh();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Failed to save comment");
+      }
+    } catch {
+      alert("Failed to save comment");
     } finally {
       setSaving(false);
     }
@@ -444,6 +451,16 @@ export function LeadDetailClient({ data, currentUser }: Props) {
       ],
       idKey: "emailId",
       endpoint: "emails",
+    },
+    licenses: {
+      fields: [
+        { key: "dlNumber", label: "DL Number" },
+        { key: "dlState", label: "DL State" },
+        { key: "dlExpiry", label: "DL Expiry", type: "date" },
+        { key: "dlIssued", label: "DL Issued", type: "date" },
+      ],
+      idKey: "licenseId",
+      endpoint: "licenses",
     },
   };
 
@@ -1074,6 +1091,9 @@ export function LeadDetailClient({ data, currentUser }: Props) {
               <div className="flex items-center gap-2 mb-2">
                 <span className="font-medium text-sm">{c.userName || "Unknown"}</span>
                 <span className="text-xs text-muted-foreground capitalize">{c.userRole}</span>
+                {c.isPrivate && (
+                  <span className="px-1.5 py-0.5 bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded text-[10px] font-medium uppercase">Private</span>
+                )}
                 <span className="text-xs text-muted-foreground ml-auto">{timeAgo(new Date(c.createdAt))}</span>
               </div>
               <p className="text-sm whitespace-pre-wrap">{c.body}</p>

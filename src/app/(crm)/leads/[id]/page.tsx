@@ -24,7 +24,7 @@ export default async function LeadDetailPage({ params }: Props) {
 
   // Fetch lead with all related data in parallel
   const [
-    [lead],
+    [leadWithAgent],
     cards,
     comments,
     attachments,
@@ -38,7 +38,13 @@ export default async function LeadDetailPage({ params }: Props) {
     licenses,
     calls,
   ] = await Promise.all([
-    db.select().from(leads).where(eq(leads.id, leadId)).limit(1),
+    db.select({
+      lead: leads,
+      agentName: users.fullName,
+    }).from(leads)
+      .leftJoin(users, eq(leads.agentId, users.id))
+      .where(eq(leads.id, leadId))
+      .limit(1),
     db.select().from(leadCards).where(eq(leadCards.leadId, leadId)).orderBy(leadCards.sortOrder),
     db.select({
       id: leadComments.id,
@@ -74,17 +80,13 @@ export default async function LeadDetailPage({ params }: Props) {
       .limit(20),
   ]);
 
-  if (!lead) notFound();
+  if (!leadWithAgent) notFound();
+
+  const lead = leadWithAgent.lead;
+  const agentName = leadWithAgent.agentName;
 
   // Record view (safe - ignores duplicates)
   try { await db.insert(leadViews).values({ leadId, userId: user.id }); } catch {}
-
-  // Get agent info
-  let agentName = null;
-  if (lead.agentId) {
-    const [agent] = await db.select({ fullName: users.fullName }).from(users).where(eq(users.id, lead.agentId));
-    agentName = agent?.fullName;
-  }
 
   // Serialize dates
   const serialized = {

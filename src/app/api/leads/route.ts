@@ -11,6 +11,11 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
 
+  // Clean decimal fields — values come as strings from the form
+  if (body.annualIncome) body.annualIncome = body.annualIncome.toString().replace(/[^0-9.]/g, '') || null;
+  if (body.mortgagePayment) body.mortgagePayment = body.mortgagePayment.toString().replace(/[^0-9.]/g, '') || null;
+  if (body.requestedLimit) body.requestedLimit = body.requestedLimit.toString().replace(/[^0-9.]/g, '') || null;
+
   // Calculate lead score
   const leadScore = calculateLeadScore({
     creditScoreRange: body.creditScoreRange,

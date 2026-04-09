@@ -56,10 +56,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     updates.customFields = merged;
   }
 
-  if (updates.phone) updates.phone = updates.phone.replace(/\D/g, "");
-  if (updates.landline) updates.landline = updates.landline.replace(/\D/g, "");
-  if (updates.agentId) updates.agentId = parseInt(updates.agentId);
-  if (updates.assignedTo) updates.assignedTo = parseInt(updates.assignedTo);
+  // Clean decimal fields — values come as strings from the form
+  if (updates.annualIncome) updates.annualIncome = updates.annualIncome.toString().replace(/[^0-9.]/g, '') || null;
+  if (updates.mortgagePayment) updates.mortgagePayment = updates.mortgagePayment.toString().replace(/[^0-9.]/g, '') || null;
+  if (updates.requestedLimit) updates.requestedLimit = updates.requestedLimit.toString().replace(/[^0-9.]/g, '') || null;
+
+  // Clean phone — whitespace-only or too-short values become null
+  if (updates.phone !== undefined) {
+    const cleanedPhone = (updates.phone || "").toString().replace(/\D/g, "");
+    updates.phone = cleanedPhone.length >= 10 ? cleanedPhone : null;
+  }
+  if (updates.landline !== undefined) {
+    const cleanedLandline = (updates.landline || "").toString().replace(/\D/g, "");
+    updates.landline = cleanedLandline.length >= 10 ? cleanedLandline : null;
+  }
+
+  // Parse agentId/assignedTo with NaN check
+  if (updates.agentId !== undefined) {
+    const parsedAgentId = parseInt(updates.agentId);
+    updates.agentId = isNaN(parsedAgentId) ? null : parsedAgentId;
+  }
+  if (updates.assignedTo !== undefined) {
+    const parsedAssignedTo = parseInt(updates.assignedTo);
+    updates.assignedTo = isNaN(parsedAssignedTo) ? null : parsedAssignedTo;
+  }
+
   if (updates.ssnLast4) updates.ssnLast4 = updates.ssnLast4.replace(/\D/g, "").slice(-4);
   if (updates.email) updates.email = updates.email.toLowerCase();
 
