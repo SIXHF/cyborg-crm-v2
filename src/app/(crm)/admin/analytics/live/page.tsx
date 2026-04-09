@@ -5,6 +5,7 @@ import { Topbar } from "@/components/topbar";
 import { eq, sql, desc, gte, and } from "drizzle-orm";
 import { Phone, PhoneCall, Users, Activity, Wifi, Clock, TrendingUp } from "lucide-react";
 import { cn, timeAgo, formatPhone } from "@/lib/utils";
+import { AutoRefresh } from "@/components/auto-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +119,7 @@ export default async function LiveAnalyticsPage() {
 
   return (
     <>
+      <AutoRefresh intervalMs={15000} />
       <Topbar title="Live Analytics" user={user} />
       <div className="p-6 space-y-6">
         {/* Today's Stats */}

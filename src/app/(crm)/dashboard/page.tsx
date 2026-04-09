@@ -236,41 +236,45 @@ export default async function DashboardPage() {
         </div>
 
         {/* Activity Log (Admin only) */}
-        {user.role === "admin" && recentActivity.length > 0 && (
+        {user.role === "admin" && (
           <div className="bg-card border border-border rounded-xl p-5">
             <div className="flex items-center gap-2 mb-4">
               <Activity className="w-4 h-4 text-primary" />
               <h3 className="font-semibold text-sm">Recent Activity</h3>
             </div>
-            <div className="divide-y divide-border">
-              {recentActivity.map((entry) => (
-                <div key={entry.id} className="py-2.5 flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{entry.username || "System"}</span>
-                      <span className="text-xs px-1.5 py-0.5 bg-muted rounded font-mono">{entry.action}</span>
-                      {entry.entityType && (
-                        <span className="text-xs text-muted-foreground">
-                          {entry.entityType}
-                          {entry.entityId ? ` #${entry.entityId}` : ""}
-                        </span>
+            {recentActivity.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">No recent activity</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {recentActivity.map((entry) => (
+                  <div key={entry.id} className="py-2.5 flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{entry.username || "System"}</span>
+                        <span className="text-xs px-1.5 py-0.5 bg-muted rounded font-mono">{entry.action}</span>
+                        {entry.entityType && (
+                          <span className="text-xs text-muted-foreground">
+                            {entry.entityType}
+                            {entry.entityId ? ` #${entry.entityId}` : ""}
+                          </span>
+                        )}
+                      </div>
+                      {entry.details && (
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate">{entry.details}</p>
                       )}
                     </div>
-                    {entry.details && (
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{entry.details}</p>
-                    )}
+                    <span className="text-xs text-muted-foreground whitespace-nowrap" suppressHydrationWarning>
+                      {entry.createdAt.toLocaleString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </span>
                   </div>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap" suppressHydrationWarning>
-                    {entry.createdAt.toLocaleString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -306,7 +306,7 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">SIP Password</label>
                     <input
-                      type="text"
+                      type="password"
                       value={form.sipPassword}
                       onChange={(e) => setForm((f) => ({ ...f, sipPassword: e.target.value }))}
                       placeholder="SIP password"
