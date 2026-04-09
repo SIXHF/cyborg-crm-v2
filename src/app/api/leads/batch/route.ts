@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUser, audit } from "@/lib/auth";
 import { db } from "@/lib/db";
-import {
-  leads, leadCards, leadCosigners, leadEmployers, leadVehicles,
-  leadRelatives, leadAddresses, leadEmails, leadLicenses,
-  leadComments, leadAttachments, leadFollowups, leadViews,
-  callQueue, callLog, collabEvents,
-} from "@/lib/db/schema";
-import { inArray, eq } from "drizzle-orm";
+import { leads } from "@/lib/db/schema";
+import { inArray } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   try {
@@ -54,20 +49,7 @@ export async function POST(req: NextRequest) {
         `Reassigned ${leadIds.length} leads to agent ${value}`,
       );
     } else if (action === "delete") {
-      // Delete child tables first
-      const childTables = [
-        leadCards, leadCosigners, leadEmployers, leadVehicles,
-        leadRelatives, leadAddresses, leadEmails, leadLicenses,
-        leadComments, leadAttachments, leadFollowups, leadViews,
-        callQueue, callLog, collabEvents,
-      ];
-
-      for (const table of childTables) {
-        try {
-          await db.delete(table).where(inArray((table as any).leadId, leadIds));
-        } catch { /* table may not have matching rows */ }
-      }
-
+      // Delete leads directly — CASCADE foreign keys handle child tables
       await db.delete(leads).where(inArray(leads.id, leadIds));
 
       await audit(

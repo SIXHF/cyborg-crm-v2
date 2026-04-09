@@ -119,11 +119,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params;
   const leadId = parseInt(id);
 
-  // Delete from child tables first
-  const childTables = [leadCards, leadCosigners, leadEmployers, leadVehicles, leadRelatives, leadAddresses, leadEmails, leadLicenses, leadComments, leadAttachments, leadFollowups, leadViews, callQueue, callLog, collabEvents];
-  for (const table of childTables) {
-    try { await db.delete(table).where(eq((table as any).leadId, leadId)); } catch {}
-  }
+  // Delete lead — CASCADE foreign keys handle all child tables automatically
   await db.delete(leads).where(eq(leads.id, leadId));
   await audit(user.id, user.username, "delete_lead", "lead", leadId, "Deleted lead");
 
