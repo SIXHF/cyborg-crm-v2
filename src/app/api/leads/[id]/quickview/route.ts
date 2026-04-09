@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { leads, leadCards, users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 // GET — quick preview of a lead (for modal/popup)
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -11,35 +11,49 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params;
   const leadId = parseInt(id);
+  if (isNaN(leadId)) return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
 
-  const [lead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
-  if (!lead) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // Single query with JOINs (was 3 separate queries — N+1 pattern)
+  const [result] = await db
+    .select({
+      id: leads.id,
+      refNumber: leads.refNumber,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
+      email: leads.email,
+      phone: leads.phone,
+      status: leads.status,
+      state: leads.state,
+      city: leads.city,
+      zip: leads.zip,
+      cardBrand: leads.cardBrand,
+      cardIssuer: leads.cardIssuer,
+      leadScore: leads.leadScore,
+      createdAt: leads.createdAt,
+      agentName: users.fullName,
+    })
+    .from(leads)
+    .leftJoin(users, eq(leads.agentId, users.id))
+    .where(eq(leads.id, leadId))
+    .limit(1);
 
-  // Get first card
-  const [card] = await db.select().from(leadCards).where(eq(leadCards.leadId, leadId)).limit(1);
+  if (!result) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Get agent name
-  let agentName = null;
-  if (lead.agentId) {
-    const [agent] = await db.select({ fullName: users.fullName }).from(users).where(eq(users.id, lead.agentId));
-    agentName = agent?.fullName;
+  // Get first card only if lead doesn't have brand/issuer
+  let cardBrand = result.cardBrand;
+  let cardIssuer = result.cardIssuer;
+  if (!cardBrand || !cardIssuer) {
+    const [card] = await db.select({ cardType: leadCards.cardType, bank: leadCards.bank })
+      .from(leadCards).where(eq(leadCards.leadId, leadId)).limit(1);
+    if (card) {
+      if (!cardBrand) cardBrand = card.cardType;
+      if (!cardIssuer) cardIssuer = card.bank;
+    }
   }
 
   return NextResponse.json({
-    id: lead.id,
-    refNumber: lead.refNumber,
-    firstName: lead.firstName,
-    lastName: lead.lastName,
-    email: lead.email,
-    phone: lead.phone,
-    status: lead.status,
-    state: lead.state,
-    city: lead.city,
-    zip: lead.zip,
-    cardBrand: lead.cardBrand || card?.cardType,
-    cardIssuer: lead.cardIssuer || card?.bank,
-    leadScore: lead.leadScore,
-    agentName,
-    createdAt: lead.createdAt,
+    ...result,
+    cardBrand,
+    cardIssuer,
   });
 }

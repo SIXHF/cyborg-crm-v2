@@ -55,7 +55,8 @@ export async function GET(req: NextRequest) {
       })
       .from(leads)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(leads.createdAt);
+      .orderBy(leads.createdAt)
+      .limit(500000); // Cap at 500K rows to prevent memory exhaustion
 
     // Build CSV
     const columns = [
