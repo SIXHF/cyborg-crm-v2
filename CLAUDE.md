@@ -241,16 +241,51 @@ npm run lint       # ESLint
 - MEDIUM: Added logout button to topbar
 - LOW: Added color-coded action badges in audit log
 
+## Bug Fixes Applied (Session 2 — 40+ bugs fixed)
+- CRITICAL: Bulk import chunk boundary off-by-1 truncating last row per chunk
+- CRITICAL: Import missing requestedLimit field (silently dropped)
+- CRITICAL: SIP password shown in plain text on Users admin page
+- CRITICAL: SMS API key hardcoded as fallback (security)
+- HIGH: Search took 28s on 2.5M rows (ILIKE on 8 columns) — replaced with dedicated indexed fields
+- HIGH: Count query on every search did full table scan — capped at 10K for searches
+- HIGH: Stale import jobs blocking new imports — auto-cleanup after 30 min
+- HIGH: REINDEX CONCURRENTLY fails after interrupted ops — added fallback to regular REINDEX
+- HIGH: Lead API parseInt NaN for agentId/assignedTo — added NaN check
+- HIGH: Phone whitespace "   " stored as empty string — now cleaned to null
+- HIGH: Numeric fields (income, mortgage, limit) not cleaned — stripped non-numeric chars
+- MEDIUM: Live Analytics showed 24h sessions as "online" — switched to user_presence (90s heartbeat)
+- MEDIUM: No presence heartbeat — added PresenceHeartbeat component (30s ping)
+- MEDIUM: Live Analytics no auto-refresh — added AutoRefresh component (15s)
+- MEDIUM: Notification bell non-functional — added click handler
+- MEDIUM: Dashboard empty activity shows nothing — added "No recent activity" message
+- MEDIUM: Lead detail N+1 query for agent name — merged into JOIN
+- MEDIUM: Licenses tab missing from related entities — added with full CRUD
+- MEDIUM: Comments missing private badge indicator — added "Private" badge
+- MEDIUM: Comment save no error handling — added response check + alert
+- MEDIUM: Data manager batch delete only 5K rows — increased to 50K + CASCADE
+- MEDIUM: No REINDEX after batch delete — auto-reindex on completion
+- MEDIUM: Manual dial disposition showed for queue leads — wasManualCall state guard
+- MEDIUM: Auto-dialer dialed same number — passed next lead phone explicitly
+- MEDIUM: Edit Lead link used queue ID not lead ID — fixed to leadId
+- LOW: Import column mapping missing requestedLimit aliases
+- LOW: Reindex status showed misleading 100% — shows "1-3 min" estimate
+- LOW: Data manager progress bar inaccurate — shows speed/ETA/cancel button
+- LOW: Search button stuck on "Searching..." — reset on new results via useEffect
+- LOW: Name search used contains match — switched to prefix for B-tree index use
+
 ## What's TODO
-- Telnyx WebRTC softphone integration (free gateway, routes through Magnus Billing at sip.osetec.net)
+- Electron wrapper for ringback audio (Chrome mutes all local audio during WebRTC calls)
+- Configure Magnus Billing server-side ringback (early media 183)
 - AI column mapping for bulk imports (Claude API — ANTHROPIC_API_KEY is set)
 - AI call analysis (Claude API)
 - PDF export for lead detail
 - MySQL -> PostgreSQL data migration script from v1
 - Redis caching layer
-- Real-time agent presence (SSE)
 - Carrier lookup (AbstractAPI)
-- File attachments upload/download
+- File attachments upload/download (API exists, no UI upload yet)
+- Input validation with Zod schema across all API routes
+- Quickview N+1 query fix (3 queries → 1 JOIN)
+- Export pagination for large datasets (currently unlimited rows)
 
 ## Performance Design
 - **Cursor-based pagination** — O(1) instead of OFFSET on 20M rows
