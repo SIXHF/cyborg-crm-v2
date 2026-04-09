@@ -459,7 +459,8 @@ async function splitInsert(
   const buildRow = (r: any) => {
     const mp = r.mortgagePayment;
     const ai = r.annualIncome;
-    return `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${esc(r.notes)},${esc(r.status)},${r.agentId},${esc(r.importRef)})`;
+    const rl = r.requestedLimit;
+    return `(${esc(r.refNumber)},${esc(r.firstName)},${esc(r.lastName)},${esc(r.email)},${esc(r.phone)},${esc(r.landline)},${r.dob ? esc(r.dob) : "NULL"},${esc(r.ssnLast4)},${esc(r.mmn)},${esc(r.vpass)},${esc(r.county)},${esc(r.address)},${esc(r.city)},${esc(r.state)},${esc(r.zip)},${esc(r.country)},${esc(r.cardType)},${esc(r.cardNumberBin)},${esc(r.cardNumberMasked)},${esc(r.cardBrand)},${esc(r.cardIssuer)},${esc(r.businessName)},${esc(r.businessEin)},${esc(r.mortgageBank)},${mp ? mp : "NULL"},${ai ? ai : "NULL"},${esc(r.employmentStatus)},${esc(r.creditScoreRange)},${rl ? rl : "NULL"},${esc(r.notes)},${esc(r.status)},${r.agentId},${esc(r.importRef)})`;
   };
 
   if (batch.length === 1) {

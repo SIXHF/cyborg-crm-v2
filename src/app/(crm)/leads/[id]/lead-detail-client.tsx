@@ -1448,6 +1448,42 @@ export function LeadDetailClient({ data, currentUser }: Props) {
               </div>
             ))}
           </div>
+
+          {/* Licenses */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Licenses ({licenses.length})</h3>
+              <button onClick={() => openRelatedAdd("licenses")} className="h-7 px-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-primary/90"><Plus className="w-3 h-3" /> Add</button>
+            </div>
+            {licenses.length === 0 && <p className="text-sm text-muted-foreground py-2">None</p>}
+            {licenses.map((l: any) => (
+              <div key={l.id} className="py-2 border-b border-border/50 last:border-0 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{l.dlNumber || "No DL Number"} {l.dlState && <span className="text-muted-foreground">({l.dlState})</span>}</p>
+                    {(l.dlIssued || l.dlExpiry) && (
+                      <p className="text-muted-foreground text-xs">
+                        {l.dlIssued && `Issued: ${l.dlIssued}`}
+                        {l.dlIssued && l.dlExpiry && " · "}
+                        {l.dlExpiry && `Expires: ${l.dlExpiry}`}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => openRelatedEdit("licenses", l)} className="h-6 px-2 bg-muted border border-border rounded text-xs hover:bg-muted/80 flex items-center gap-1"><Edit className="w-3 h-3" /> Edit</button>
+                    {relatedDeleteConfirm?.type === "licenses" && relatedDeleteConfirm?.id === l.id ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => deleteRelatedEntity("licenses", l.id)} className="h-6 px-2 bg-red-500 text-white rounded text-xs">Confirm</button>
+                        <button onClick={() => setRelatedDeleteConfirm(null)} className="h-6 px-1 bg-muted rounded text-xs"><X className="w-3 h-3" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRelatedDeleteConfirm({ type: "licenses", id: l.id })} className="h-6 px-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-xs hover:bg-red-500/20 flex items-center gap-1"><Trash2 className="w-3 h-3" /></button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

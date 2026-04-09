@@ -77,6 +77,7 @@ export const fieldMap: Record<string, string> = {
   "annual_income": "annualIncome", "annualincome": "annualIncome", "income": "annualIncome",
   "employment_status": "employmentStatus", "employmentstatus": "employmentStatus", "employment": "employmentStatus",
   "credit_score_range": "creditScoreRange", "creditscore": "creditScoreRange", "credit_score": "creditScoreRange",
+  "requested_limit": "requestedLimit", "requestedlimit": "requestedLimit", "req_limit": "requestedLimit",
   // Misc
   "notes": "notes", "note": "notes", "extrafield": "notes", "extra_field": "notes", "extra": "notes",
   "ref_number": "refNumberOriginal", "refnumber": "refNumberOriginal", "ref": "refNumberOriginal",
