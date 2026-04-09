@@ -57,9 +57,10 @@ export default async function LeadsPage({ searchParams }: Props) {
   }
 
   // Dedicated search fields — each queries only its indexed column
+  // Revert name search to simple prefix (faster)
   if (params.name && params.name.trim().length >= 2) {
-    const term = `%${params.name.trim()}%`;
-    conditions.push(or(ilike(leads.firstName, term), ilike(leads.lastName, term)));
+    const prefix = `${params.name.trim()}%`;
+    conditions.push(or(ilike(leads.firstName, prefix), ilike(leads.lastName, prefix)));
   }
   if (params.phone && params.phone.trim().length >= 3) {
     const digits = params.phone.trim().replace(/\D/g, "");
@@ -155,15 +156,24 @@ export default async function LeadsPage({ searchParams }: Props) {
   const nextCursor = hasMore && rows.length > 0 ? rows[rows.length - 1].id : null;
   const prevCursor = cursor && rows.length > 0 ? rows[0].id : null;
 
-  // Total count (cached, not per-request for huge tables)
-  const [countResult] = await db.select({ count: sql<number>`count(*)` }).from(leads).where(
-    conditions.filter((_, i) => {
-      // Exclude cursor conditions from total count
-      return !(cursor && i >= conditions.length - 1);
-    }).length > 0
-      ? and(...conditions.filter((_, i) => !(cursor && i >= conditions.length - 1)))
-      : undefined
-  );
+  // Total count — use exact count for unfiltered views, estimate for searches
+  const hasSearchFilters = !!(params.name || params.phone || params.bin || params.bank || params.email || params.q);
+  const countConditions = conditions.filter((_, i) => !(cursor && i >= conditions.length - 1));
+  let countResult: { count: number };
+
+  if (hasSearchFilters && countConditions.length > 0) {
+    // For search: use limited count (cap at 10000) to avoid slow full scans
+    const [result] = await db.select({ count: sql<number>`count(*)` }).from(
+      db.select({ id: leads.id }).from(leads).where(and(...countConditions)).limit(10000).as("limited")
+    );
+    countResult = result;
+  } else {
+    // For unfiltered: use exact count (fast with no WHERE, or simple indexed filters)
+    const [result] = await db.select({ count: sql<number>`count(*)` }).from(leads).where(
+      countConditions.length > 0 ? and(...countConditions) : undefined
+    );
+    countResult = result;
+  }
 
   // Get agents for filter dropdown
   const agents = await db
