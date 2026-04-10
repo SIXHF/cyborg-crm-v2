@@ -12,7 +12,10 @@ export default function LoginPage() {
 
   useEffect(() => {
     fetch("/api/app-info").then(r => r.json()).then(s => {
-      if (s.appName) setAppName(s.appName);
+      if (s.appName) {
+        setAppName(s.appName);
+        document.title = s.appName;
+      }
     }).catch(() => {});
   }, []);
   const router = useRouter();
