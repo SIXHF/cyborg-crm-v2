@@ -17,6 +17,7 @@ interface SidebarProps {
     role: string;
     username: string;
   };
+  appName?: string;
 }
 
 const navItems = [
@@ -52,7 +53,7 @@ const adminItems = [
   ]},
 ];
 
-export function Sidebar({ user }: SidebarProps) {
+export function Sidebar({ user, appName = "Cyborg CRM" }: SidebarProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -80,9 +81,9 @@ export function Sidebar({ user }: SidebarProps) {
       {/* Logo */}
       <div className="flex items-center gap-2 px-4 py-4 border-b border-border">
         <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold text-sm">
-          C
+          {appName[0]}
         </div>
-        <span className="font-semibold text-lg">Cyborg CRM</span>
+        <span className="font-semibold text-lg">{appName}</span>
       </div>
 
       {/* Nav */}

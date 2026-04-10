@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
@@ -8,6 +8,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [appName, setAppName] = useState("Cyborg CRM");
+
+  useEffect(() => {
+    fetch("/api/app-info").then(r => r.json()).then(s => {
+      if (s.appName) setAppName(s.appName);
+    }).catch(() => {});
+  }, []);
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -40,9 +47,9 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="w-14 h-14 bg-primary rounded-2xl flex items-center justify-center text-primary-foreground font-bold text-2xl mx-auto mb-4">
-            C
+            {appName[0]}
           </div>
-          <h1 className="text-2xl font-bold">Cyborg CRM</h1>
+          <h1 className="text-2xl font-bold">{appName}</h1>
           <p className="text-muted-foreground text-sm mt-1">Sign in to your account</p>
         </div>
 
