@@ -31,7 +31,7 @@ export default async function LeadsPage({ searchParams }: Props) {
   const user = await requireAuth();
   const params = await searchParams;
 
-  const limit = Math.min(parseInt(params.limit || "50"), 100);
+  const limit = Math.min(parseInt(params.limit || "50"), 5000);
   const cursor = params.cursor ? parseInt(params.cursor) : null;
   const direction = params.dir === "prev" ? "prev" : "next";
 

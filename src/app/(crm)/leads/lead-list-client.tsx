@@ -350,9 +350,21 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
 
         {/* Pagination */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-border">
-          <span className="text-sm text-muted-foreground">
-            Showing {leads.length} of {total.toLocaleString()}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              Showing {leads.length} of {total.toLocaleString()}
+            </span>
+            <select
+              value={filters.limit || "50"}
+              onChange={(e) => navigate({ limit: e.target.value, cursor: "", dir: "" })}
+              className="h-7 px-2 text-xs bg-muted border border-border rounded-lg"
+            >
+              <option value="50">50/page</option>
+              <option value="100">100/page</option>
+              <option value="500">500/page</option>
+              <option value="5000">5000/page</option>
+            </select>
+          </div>
           <div className="flex items-center gap-2">
             {prevCursor && (
               <button

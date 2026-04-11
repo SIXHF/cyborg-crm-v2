@@ -149,7 +149,7 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
           </thead>
           <tbody>
             {usersList.map((u) => (
-              <tr key={u.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+              <tr key={u.id} className="border-b border-border hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => openEdit(u)}>
                 <td className="px-4 py-3">
                   <div>
                     <p className="font-medium">{u.fullName}</p>
