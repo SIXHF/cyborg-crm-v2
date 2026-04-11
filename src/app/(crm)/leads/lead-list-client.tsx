@@ -518,6 +518,32 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
               <option key={s} value={s}>{s.replace("_", " ")}</option>
             ))}
           </select>
+          {/* Assign to agent */}
+          <select
+            disabled={batchLoading}
+            onChange={async (e) => {
+              if (!e.target.value) return;
+              const agentName = agents.find(a => a.id.toString() === e.target.value)?.fullName || e.target.value;
+              if (!confirm(`Assign ${selected.size} leads to ${agentName}?`)) { e.target.value = ""; return; }
+              setBatchLoading(true);
+              try {
+                await fetch("/api/leads/batch", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ ids: Array.from(selected), action: "reassign", value: e.target.value }),
+                });
+                setSelected(new Set());
+                router.refresh();
+              } finally { setBatchLoading(false); }
+            }}
+            className="h-8 px-2 text-xs bg-muted border border-border rounded-lg disabled:opacity-50"
+            defaultValue=""
+          >
+            <option value="">Assign to…</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id.toString()}>{a.fullName}</option>
+            ))}
+          </select>
           {/* Add to queue */}
           <button
             disabled={batchLoading}
@@ -540,11 +566,11 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
             <Phone className="w-3.5 h-3.5" />
             Add to Queue
           </button>
-          {/* Export */}
+          {/* Export selected */}
           <button
             onClick={() => {
-              const params = new URLSearchParams(filters as Record<string, string>);
-              window.open(`/api/leads/export?${params.toString()}`, "_blank");
+              const ids = Array.from(selected).join(",");
+              window.open(`/api/leads/export?ids=${ids}`, "_blank");
             }}
             className="h-8 px-3 text-sm bg-muted rounded-lg hover:bg-muted/80 flex items-center gap-1.5"
           >

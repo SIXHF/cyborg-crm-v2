@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { leads } from "@/lib/db/schema";
-import { eq, ilike, and, gte, lte, or, sql } from "drizzle-orm";
+import { eq, ilike, and, gte, lte, or, sql, inArray } from "drizzle-orm";
 
 export async function GET(req: NextRequest) {
   try {
@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
+    const ids = searchParams.get("ids");
     const q = searchParams.get("q");
     const status = searchParams.get("status");
     const agent = searchParams.get("agent");
@@ -19,6 +20,14 @@ export async function GET(req: NextRequest) {
 
     // Build conditions
     const conditions: any[] = [];
+
+    // Export specific leads by ID (from batch selection)
+    if (ids) {
+      const idList = ids.split(",").map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      if (idList.length > 0) {
+        conditions.push(inArray(leads.id, idList));
+      }
+    }
 
     if (q) {
       conditions.push(
