@@ -8,6 +8,7 @@ export async function GET(req: NextRequest) {
   try {
     const user = await getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (user.role === "agent") return NextResponse.json({ error: "Agents cannot export leads" }, { status: 403 });
 
     const { searchParams } = new URL(req.url);
     const ids = searchParams.get("ids");

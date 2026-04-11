@@ -171,16 +171,18 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{total.toLocaleString()} leads</span>
-          <button
-            onClick={() => {
-              const params = new URLSearchParams(filters as Record<string, string>);
-              window.open(`/api/leads/export?${params.toString()}`, "_blank");
-            }}
-            className="h-9 px-3 border border-border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-muted transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Export
-          </button>
+          {userRole !== "agent" && (
+            <button
+              onClick={() => {
+                const params = new URLSearchParams(filters as Record<string, string>);
+                window.open(`/api/leads/export?${params.toString()}`, "_blank");
+              }}
+              className="h-9 px-3 border border-border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-muted transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </button>
+          )}
           <Link
             href="/leads/new"
             className="h-9 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-primary/90 transition-colors"
@@ -578,7 +580,8 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
             <Phone className="w-3.5 h-3.5" />
             Add to Queue
           </button>
-          {/* Export selected */}
+          {/* Export selected — admin/processor only */}
+          {userRole !== "agent" && (
           <button
             onClick={() => {
               const ids = Array.from(selected).join(",");
@@ -589,6 +592,7 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
             <Download className="w-3.5 h-3.5" />
             Export
           </button>
+          )}
           {/* Delete */}
           <button
             disabled={batchLoading}
