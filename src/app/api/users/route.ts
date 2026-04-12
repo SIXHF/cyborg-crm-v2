@@ -21,6 +21,8 @@ export async function GET(req: NextRequest) {
         leadsVisibility: users.leadsVisibility,
         sipUsername: users.sipUsername,
         sipPassword: users.sipPassword,
+        sipAuthUser: users.sipAuthUser,
+        sipDisplayName: users.sipDisplayName,
         allowedIps: users.allowedIps,
         lastLoginAt: users.lastLoginAt,
         lastLoginIp: users.lastLoginIp,
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (user.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const { username, email, password, fullName, role, isActive, sipUsername, sipPassword, leadsVisibility, allowedIps } = await req.json();
+    const { username, email, password, fullName, role, isActive, sipUsername, sipPassword, sipAuthUser, sipDisplayName, leadsVisibility, allowedIps } = await req.json();
 
     if (!username || !email || !password || !fullName) {
       return NextResponse.json({ error: "username, email, password, and fullName are required" }, { status: 400 });
@@ -59,6 +61,8 @@ export async function POST(req: NextRequest) {
       isActive: isActive !== undefined ? isActive : true,
       sipUsername: sipUsername || null,
       sipPassword: sipPassword || null,
+      sipAuthUser: sipAuthUser || null,
+      sipDisplayName: sipDisplayName || null,
       leadsVisibility: leadsVisibility || "own",
       allowedIps: allowedIps || null,
     }).returning({ id: users.id });
@@ -86,7 +90,7 @@ export async function PATCH(req: NextRequest) {
     if (user.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const body = await req.json();
-    const { id, username, email, password, fullName, role, isActive, sipUsername, sipPassword, leadsVisibility, allowedIps } = body;
+    const { id, username, email, password, fullName, role, isActive, sipUsername, sipPassword, sipAuthUser, sipDisplayName, leadsVisibility, allowedIps } = body;
 
     if (!id) {
       return NextResponse.json({ error: "User ID is required" }, { status: 400 });
@@ -100,6 +104,8 @@ export async function PATCH(req: NextRequest) {
     if (isActive !== undefined) updates.isActive = isActive;
     if (sipUsername !== undefined) updates.sipUsername = sipUsername || null;
     if (sipPassword !== undefined) updates.sipPassword = sipPassword || null;
+    if (sipAuthUser !== undefined) updates.sipAuthUser = sipAuthUser || null;
+    if (sipDisplayName !== undefined) updates.sipDisplayName = sipDisplayName || null;
     if (leadsVisibility !== undefined) updates.leadsVisibility = leadsVisibility;
     if (allowedIps !== undefined) updates.allowedIps = allowedIps || null;
 

@@ -22,6 +22,8 @@ export default async function UsersPage() {
       leadsVisibility: users.leadsVisibility,
       sipUsername: users.sipUsername,
       sipPassword: users.sipPassword,
+      sipAuthUser: users.sipAuthUser,
+      sipDisplayName: users.sipDisplayName,
       allowedIps: users.allowedIps,
       lastLoginAt: users.lastLoginAt,
       createdAt: users.createdAt,
