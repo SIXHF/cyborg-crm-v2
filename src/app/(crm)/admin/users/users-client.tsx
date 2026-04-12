@@ -14,6 +14,8 @@ interface UserRow {
   leadsVisibility?: string | null;
   sipUsername?: string | null;
   sipPassword?: string | null;
+  sipAuthUser?: string | null;
+  sipDisplayName?: string | null;
   allowedIps?: string | null;
   lastLoginAt: string | null;
   createdAt: string;
@@ -38,6 +40,8 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
     isActive: true,
     sipUsername: "",
     sipPassword: "",
+    sipAuthUser: "",
+    sipDisplayName: "",
     leadsVisibility: "own" as string,
     allowedIps: "",
   });
@@ -49,7 +53,8 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
     setEditingUser(null);
     setForm({
       username: "", email: "", password: "", fullName: "", role: "agent", isActive: true,
-      sipUsername: "", sipPassword: "", leadsVisibility: "own", allowedIps: "",
+      sipUsername: "", sipPassword: "", sipAuthUser: "", sipDisplayName: "",
+      leadsVisibility: "own", allowedIps: "",
     });
     setError("");
     setShowForm(true);
@@ -66,6 +71,8 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
       isActive: u.isActive,
       sipUsername: u.sipUsername || "",
       sipPassword: u.sipPassword || "",
+      sipAuthUser: u.sipAuthUser || "",
+      sipDisplayName: u.sipDisplayName || "",
       leadsVisibility: u.leadsVisibility || "own",
       allowedIps: u.allowedIps || "",
     });
@@ -310,6 +317,26 @@ export function UsersClient({ users: initialUsers }: { users: UserRow[] }) {
                       value={form.sipPassword}
                       onChange={(e) => setForm((f) => ({ ...f, sipPassword: e.target.value }))}
                       placeholder="SIP password"
+                      className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Auth Username</label>
+                    <input
+                      type="text"
+                      value={form.sipAuthUser}
+                      onChange={(e) => setForm((f) => ({ ...f, sipAuthUser: e.target.value }))}
+                      placeholder="Defaults to SIP Username"
+                      className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Display Name</label>
+                    <input
+                      type="text"
+                      value={form.sipDisplayName}
+                      onChange={(e) => setForm((f) => ({ ...f, sipDisplayName: e.target.value }))}
+                      placeholder="Defaults to full name"
                       className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
                     />
                   </div>
