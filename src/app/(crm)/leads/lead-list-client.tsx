@@ -29,7 +29,7 @@ interface Props {
   nextCursor: number | null;
   prevCursor: number | null;
   agents: { id: number; fullName: string }[];
-  filters: Record<string, string | undefined> & { name?: string; phone?: string; bin?: string; bank?: string; email?: string };
+  filters: Record<string, string | undefined> & { name?: string; phone?: string; bin?: string; bank?: string; email?: string; agent?: string };
   userRole: string;
 }
 
@@ -49,6 +49,7 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
   const [searchBin, setSearchBin] = useState(filters.bin || "");
   const [searchBank, setSearchBank] = useState(filters.bank || "");
   const [searchEmail, setSearchEmail] = useState(filters.email || "");
+  const [searchAgent, setSearchAgent] = useState(filters.agent || "");
   const [showFilters, setShowFilters] = useState(false);
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -60,6 +61,17 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
 
   // Reset searching state when results arrive (new props = page re-rendered)
   useEffect(() => { setSearching(false); }, [leads]);
+
+  // Sync local search state with URL filters (e.g. when "Clear Filters" button
+  // navigates directly without going through handleSearch/clearSearch).
+  useEffect(() => {
+    setSearchName(filters.name || "");
+    setSearchPhone(filters.phone || "");
+    setSearchBin(filters.bin || "");
+    setSearchBank(filters.bank || "");
+    setSearchEmail(filters.email || "");
+    setSearchAgent(filters.agent || "");
+  }, [filters.name, filters.phone, filters.bin, filters.bank, filters.email, filters.agent]);
 
   async function openQuickView(e: React.MouseEvent, leadId: number) {
     e.stopPropagation();
@@ -88,15 +100,15 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
     if (searching) return; // prevent double-submit
     navigate({
       name: searchName, phone: searchPhone, bin: searchBin,
-      bank: searchBank, email: searchEmail,
+      bank: searchBank, email: searchEmail, agent: searchAgent,
       q: "", cursor: "", dir: "",
     });
   }
 
   function clearSearch() {
     setSearchName(""); setSearchPhone(""); setSearchBin("");
-    setSearchBank(""); setSearchEmail("");
-    navigate({ name: "", phone: "", bin: "", bank: "", email: "", q: "", cursor: "", dir: "" });
+    setSearchBank(""); setSearchEmail(""); setSearchAgent("");
+    navigate({ name: "", phone: "", bin: "", bank: "", email: "", agent: "", q: "", cursor: "", dir: "" });
   }
 
   function toggleAll() {
@@ -107,13 +119,13 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
     }
   }
 
-  const hasSearch = !!(searchName || searchPhone || searchBin || searchBank || searchEmail);
+  const hasSearch = !!(searchName || searchPhone || searchBin || searchBank || searchEmail || searchAgent);
 
   return (
     <div className="p-6 space-y-4">
       {/* Search fields */}
       <form onSubmit={handleSearch} className="bg-card border border-border rounded-xl p-4 space-y-3">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className={cn("grid grid-cols-2 gap-3", userRole !== "agent" ? "md:grid-cols-6" : "md:grid-cols-5")}>
           <div>
             <label className="block text-xs text-muted-foreground mb-1">Name</label>
             <input type="text" value={searchName} onChange={e => setSearchName(e.target.value)}
@@ -139,6 +151,30 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
             <input type="text" value={searchEmail} onChange={e => setSearchEmail(e.target.value)}
               placeholder="Email address" className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm" />
           </div>
+          {userRole !== "agent" && (
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Agent</label>
+              <select
+                value={searchAgent}
+                onChange={e => {
+                  setSearchAgent(e.target.value);
+                  // Auto-apply on select since filters are discrete
+                  navigate({
+                    name: searchName, phone: searchPhone, bin: searchBin,
+                    bank: searchBank, email: searchEmail, agent: e.target.value,
+                    q: "", cursor: "", dir: "",
+                  });
+                }}
+                className="w-full h-9 px-3 bg-muted border border-border rounded-lg text-sm"
+              >
+                <option value="">All agents</option>
+                <option value="unassigned">— Unassigned —</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id.toString()}>{a.fullName}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button type="submit" disabled={searching || !hasSearch}
@@ -204,16 +240,6 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
             <option value="">All Statuses</option>
             {["new", "in_review", "approved", "declined", "forwarded", "on_hold"].map((s) => (
               <option key={s} value={s}>{s.replace("_", " ")}</option>
-            ))}
-          </select>
-          <select
-            value={filters.agent || ""}
-            onChange={(e) => navigate({ agent: e.target.value, cursor: "", dir: "" })}
-            className="h-9 px-3 bg-muted border border-border rounded-lg text-sm"
-          >
-            <option value="">All Agents</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id.toString()}>{a.fullName}</option>
             ))}
           </select>
           <input
@@ -532,13 +558,18 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
               <option key={s} value={s}>{s.replace("_", " ")}</option>
             ))}
           </select>
-          {/* Assign to agent */}
+          {/* Assign to agent — admin/processor only */}
+          {userRole !== "agent" && (
           <select
             disabled={batchLoading}
             onChange={async (e) => {
               if (!e.target.value) return;
+              const isUnassign = e.target.value === "null";
               const agentName = agents.find(a => a.id.toString() === e.target.value)?.fullName || e.target.value;
-              if (!confirm(`Assign ${selected.size} leads to ${agentName}?`)) { e.target.value = ""; return; }
+              const msg = isUnassign
+                ? `Unassign ${selected.size} leads?`
+                : `Assign ${selected.size} leads to ${agentName}?`;
+              if (!confirm(msg)) { e.target.value = ""; return; }
               setBatchLoading(true);
               try {
                 await fetch("/api/leads/batch", {
@@ -554,10 +585,12 @@ export function LeadListClient({ leads, total, nextCursor, prevCursor, agents, f
             defaultValue=""
           >
             <option value="">Assign to…</option>
+            <option value="null">— Unassign —</option>
             {agents.map((a) => (
               <option key={a.id} value={a.id.toString()}>{a.fullName}</option>
             ))}
           </select>
+          )}
           {/* Add to queue */}
           <button
             disabled={batchLoading}
