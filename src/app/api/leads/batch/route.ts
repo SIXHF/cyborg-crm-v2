@@ -42,15 +42,33 @@ export async function POST(req: NextRequest) {
         `Updated ${leadIds.length} leads to status: ${value}`,
       );
     } else if (action === "reassign") {
-      if (!value) return NextResponse.json({ error: "value is required for reassign" }, { status: 400 });
-      await db
-        .update(leads)
-        .set({ agentId: parseInt(value), updatedAt: new Date() })
-        .where(inArray(leads.id, leadIds));
+      // value === "null" or empty means unassign
+      const isUnassign = !value || value === "null";
+      if (!isUnassign && (isNaN(parseInt(value!)) || parseInt(value!) <= 0)) {
+        return NextResponse.json({ error: "Invalid agent id" }, { status: 400 });
+      }
+      const agentId = isUnassign ? null : parseInt(value!);
+      if (isUnassign) {
+        // Clear BOTH agentId AND assignedTo so leads disappear from agents
+        // with "assigned" visibility (who see leads where assignedTo = user.id).
+        await db
+          .update(leads)
+          .set({ agentId: null, assignedTo: null, updatedAt: new Date() })
+          .where(inArray(leads.id, leadIds));
+      } else {
+        // Reassign: update agentId only (matches v1 behavior). assignedTo is a
+        // separate handoff field and should not be overwritten here.
+        await db
+          .update(leads)
+          .set({ agentId, updatedAt: new Date() })
+          .where(inArray(leads.id, leadIds));
+      }
 
       await audit(
         user.id, user.username, "batch_reassign", "lead", undefined,
-        `Reassigned ${leadIds.length} leads to agent ${value}`,
+        isUnassign
+          ? `Unassigned ${leadIds.length} leads`
+          : `Reassigned ${leadIds.length} leads to agent ${value}`,
       );
     } else if (action === "delete") {
       // Delete leads directly — CASCADE foreign keys handle child tables

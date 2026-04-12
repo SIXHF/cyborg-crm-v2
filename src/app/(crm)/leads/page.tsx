@@ -98,7 +98,9 @@ export default async function LeadsPage({ searchParams }: Props) {
   if (params.status) {
     conditions.push(eq(leads.status, params.status as any));
   }
-  if (params.agent) {
+  if (params.agent === "unassigned") {
+    conditions.push(sql`${leads.agentId} IS NULL`);
+  } else if (params.agent) {
     conditions.push(eq(leads.agentId, parseInt(params.agent)));
   }
   if (params.from) {
