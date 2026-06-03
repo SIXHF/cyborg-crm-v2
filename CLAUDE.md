@@ -5,7 +5,7 @@ High-performance CRM built with Next.js 15, TypeScript, PostgreSQL. Designed for
 ## Tech Stack
 - **Frontend**: Next.js 15 App Router + React + Tailwind CSS + Lucide icons
 - **Backend**: Next.js API routes + Server Components
-- **Database**: PostgreSQL 16 via Drizzle ORM (`src/lib/db/schema.ts`)
+- **Database**: PostgreSQL 18 via Drizzle ORM (`src/lib/db/schema.ts`) — Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`
 - **Auth**: Custom session-based auth (`src/lib/auth/index.ts`)
 - **Deployment**: Railway (Docker) — auto-deploys from `main` branch
 - **Theme**: Dark/light mode via next-themes
