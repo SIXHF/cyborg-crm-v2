@@ -74,6 +74,7 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const [manualDial, setManualDial] = useState("");
   const [callNotes, setCallNotes] = useState("");
   const [sipLog, setSipLog] = useState<string[]>([]);
+  const [micError, setMicError] = useState<string | null>(null);
   // Auto-dialer
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const [autoDialDelay, setAutoDialDelay] = useState(3);
@@ -93,6 +94,8 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
   const audioRef = useRef<HTMLAudioElement>(null);
   const telnyxClientRef = useRef<any>(null);
   const activeCallRef = useRef<any>(null);
+  // Single mic stream held open for the whole session — see ensureMic()
+  const micStreamRef = useRef<MediaStream | null>(null);
 
   const [ssnRevealed, setSsnRevealed] = useState(false);
   const [dialedNumber, setDialedNumber] = useState<string | null>(null); // track manual dial number
@@ -210,6 +213,11 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
         try { client.unregister(); } catch {}
         try { client.disconnect(); } catch {}
       }
+      // Release the held microphone stream so the OS mic indicator turns off
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+        micStreamRef.current = null;
+      }
     };
   }, [sipCredentials.username, sipCredentials.password]);
 
@@ -267,6 +275,49 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     return `+${digits}`;
   }
 
+  // Acquire the microphone ONCE and hold it open for the whole calling session.
+  //
+  // Why: SIP.js calls getUserMedia internally on every simpleUser.call(). The
+  // auto-dialer fires its 2nd+ calls from a setTimeout (see logOutcome) with NO
+  // user gesture. If the browser's mic permission isn't already granted+active,
+  // Chrome rejects that gesture-less getUserMedia with
+  // "NotAllowedError: Permission denied by system" and the call silently dies —
+  // which is the reported "auto dialer not working" symptom.
+  //
+  // Holding one stream open (acquired up front from a real click) keeps the
+  // permission in the granted/active state, so SIP.js's per-call getUserMedia
+  // then succeeds without a gesture. Returns true if the mic is ready.
+  async function ensureMic(): Promise<boolean> {
+    const live = micStreamRef.current?.getAudioTracks().some((t) => t.readyState === "live");
+    if (live) return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      micStreamRef.current = stream;
+      setMicError(null);
+      log("Microphone ready");
+      return true;
+    } catch (e: any) {
+      const name: string = e?.name || "Error";
+      let msg: string;
+      if (name === "NotAllowedError") {
+        msg = /system/i.test(e?.message || "")
+          ? "Microphone is blocked by your operating system. Enable mic access for your browser — Windows: Settings → Privacy & security → Microphone (turn on “Let desktop apps access your microphone”); macOS: System Settings → Privacy & Security → Microphone — then reload this page."
+          : "Microphone permission was denied. Click the camera/lock icon in the address bar, allow microphone access for this site, then reload.";
+      } else if (name === "NotReadableError" || name === "AbortError") {
+        msg = "Microphone is in use by another application. Close other apps using the mic (Zoom, Teams, another call) and try again.";
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        msg = "No microphone was found. Connect a microphone and reload this page.";
+      } else if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        msg = "Microphone access is unavailable. The page must be served over HTTPS to place calls.";
+      } else {
+        msg = `Microphone error: ${e?.message || name}`;
+      }
+      setMicError(msg);
+      log(`Mic acquisition failed: ${name} — ${e?.message || ""}`);
+      return false;
+    }
+  }
+
   async function startCall(phoneOverride?: string, isManual = false) {
     const phoneRaw = phoneOverride || currentLead?.phone;
     if (!phoneRaw) return;
@@ -279,6 +330,16 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
     if (autoDialTimerRef.current) {
       clearTimeout(autoDialTimerRef.current);
       autoDialTimerRef.current = null;
+    }
+
+    // Ensure the mic is granted+held BEFORE dialing. This is the only place that
+    // reliably covers both manual calls (user gesture) and auto-dialed calls
+    // (setTimeout, no gesture). If it fails, surface the error and halt the
+    // auto-dialer so it doesn't keep firing calls that can't get audio.
+    if (!(await ensureMic())) {
+      stopAutoDial();
+      setCallState("idle");
+      return;
     }
 
     const manualNum = isManual ? phoneRaw : null;
@@ -363,6 +424,18 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
       log(`Call failed: ${e.message}`);
       stopRingback();
       setCallState("idle");
+      // A mic permission error can still surface from SIP.js's internal
+      // getUserMedia (e.g. OS revoked access mid-session). Surface it and stop
+      // the auto-dialer instead of letting it spin on failing calls.
+      if (e?.name === "NotAllowedError" || /permission|microphone|getusermedia/i.test(e?.message || "")) {
+        micStreamRef.current = null; // force re-acquire next attempt
+        setMicError(
+          /system/i.test(e?.message || "")
+            ? "Microphone is blocked by your operating system. Enable mic access for your browser in OS settings, then reload this page."
+            : "Microphone access failed. Allow the microphone for this site (address-bar icon), then reload this page.",
+        );
+        stopAutoDial();
+      }
     }
   }
 
@@ -651,6 +724,26 @@ export function CallQueueClient({ initialQueue, sipCredentials, currentUser }: P
           ))}
         </div>
       </div>
+
+      {/* Microphone error banner — calls cannot place audio without mic access */}
+      {micError && (
+        <div className="absolute top-0 left-80 right-0 z-50 m-3 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400 flex items-start gap-3">
+          <MicOff className="w-5 h-5 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-semibold">Microphone unavailable</p>
+            <p className="mt-0.5 leading-snug">{micError}</p>
+            <button
+              onClick={() => { setMicError(null); ensureMic(); }}
+              className="mt-2 h-7 px-3 bg-red-500 text-white rounded-md text-xs font-medium hover:bg-red-600"
+            >
+              Retry microphone
+            </button>
+          </div>
+          <button onClick={() => setMicError(null)} className="p-1 hover:opacity-70" aria-label="Dismiss">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Main call area */}
       <div className="flex-1 flex flex-col items-center justify-center p-6">
