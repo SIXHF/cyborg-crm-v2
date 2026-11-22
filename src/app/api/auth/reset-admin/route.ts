@@ -5,8 +5,12 @@ import { hashPassword } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
+  const secret = process.env.RESET_SECRET;
+  if (!secret) {
+    return NextResponse.json({ error: "not configured" }, { status: 404 });
+  }
   const { token, password } = await req.json();
-  if (token !== "xK9m2Pq7vR4nT8wL") {
+  if (!token || token !== secret) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const hash = await hashPassword(password);
